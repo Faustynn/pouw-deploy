@@ -7,6 +7,19 @@
 // After successful tests, the evening build of main deploys the same versions
 // to staging. If tests or the deploy fail, staging stays on the previous
 // version and an e-mail goes to NOTIFY_EMAIL (main only, PRs show on GitHub).
+
+// E-mail for builds of main, only when SMTP is configured. Without SMTP the build just logs that it skipped it.
+def sendNotification(String subject, String body) {
+    if (env.BRANCH_NAME != 'main') {
+        return
+    }
+    if (!env.SMTP_HOST) {
+        echo "SMTP is not configured, e-mail not sent: ${subject}"
+        return
+    }
+    emailext to: env.NOTIFY_EMAIL, subject: subject, body: body
+}
+
 pipeline {
     agent { label 'docker' }
 
@@ -73,25 +86,19 @@ pipeline {
             sh 'docker compose -p $TEST_PROJECT logs --no-color --tail=300 > logs.txt || true'
             archiveArtifacts artifacts: 'logs.txt', allowEmptyArchive: true
             script {
-                if (env.BRANCH_NAME == 'main') {
-                    emailext to: env.NOTIFY_EMAIL,
-                        subject: '[PoUW Jenkins] FAILED: ${PROJECT_NAME} #${BUILD_NUMBER}',
-                        body: 'Build failed, staging stays on the previous version.\n\n' +
-                            '${BUILD_URL}\n\nService commits:\n' + (currentBuild.description ?: '-') +
-                            '\n\nTests: ${TEST_COUNTS, var="fail"} failed out of ${TEST_COUNTS, var="total"}\n' +
-                            '${FAILED_TESTS, showStack=false, maxTests=20}\n\n' +
-                            'End of log:\n${BUILD_LOG, maxLines=50}'
-                }
+                sendNotification('[PoUW Jenkins] FAILED: ${PROJECT_NAME} #${BUILD_NUMBER}',
+                    'Build failed, staging stays on the previous version.\n\n' +
+                    '${BUILD_URL}\n\nService commits:\n' + (currentBuild.description ?: '-') +
+                    '\n\nTests: ${TEST_COUNTS, var="fail"} failed out of ${TEST_COUNTS, var="total"}\n' +
+                    '${FAILED_TESTS, showStack=false, maxTests=20}\n\n' +
+                    'End of log:\n${BUILD_LOG, maxLines=50}')
             }
         }
         fixed {
             script {
-                if (env.BRANCH_NAME == 'main') {
-                    emailext to: env.NOTIFY_EMAIL,
-                        subject: '[PoUW Jenkins] FIXED: ${PROJECT_NAME} #${BUILD_NUMBER}',
-                        body: 'Build of main passed after a previous failure.\n\n${BUILD_URL}\n\n' +
-                            'Service commits:\n' + (currentBuild.description ?: '-')
-                }
+                sendNotification('[PoUW Jenkins] FIXED: ${PROJECT_NAME} #${BUILD_NUMBER}',
+                    'Build of main passed after a previous failure.\n\n${BUILD_URL}\n\n' +
+                    'Service commits:\n' + (currentBuild.description ?: '-'))
             }
         }
         // cleanup runs after the other post blocks, otherwise the logs would already be gone

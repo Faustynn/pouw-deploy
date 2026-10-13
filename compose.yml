@@ -94,7 +94,7 @@ services:
       JENKINS_LOCAL_BRANCH: ${JENKINS_LOCAL_BRANCH:-main}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM: ${SMTP_FROM:-jenkins@localhost}
     secrets:
       - jenkins_admin_password
       - jenkins_agent_ssh_key
@@ -137,8 +137,7 @@ services:
       - jenkins_agent_ssh_pubkey
     volumes:
       - jenkins-docker-certs:/certs/client:ro
-      # Same path in jenkins-docker too, so bind mounts from the workspace work
-      - jenkins-agent-home:/home/jenkins
+      - jenkins-agent-work:/home/jenkins/agent
     networks: [jenkins]
     depends_on:
       jenkins-docker:
@@ -154,7 +153,7 @@ services:
     volumes:
       - jenkins-docker-certs:/certs/client
       - jenkins-docker-data:/var/lib/docker
-      - jenkins-agent-home:/home/jenkins
+      - jenkins-agent-work:/home/jenkins/agent
     networks:
       jenkins:
         # The TLS certificate from docker:dind is issued for the name "docker"
@@ -213,7 +212,7 @@ volumes:
   prometheus-data:
   grafana-data:
   jenkins-home:
-  jenkins-agent-home:
+  jenkins-agent-work:
   jenkins-docker-certs:
   jenkins-docker-data:
   caddy-data:

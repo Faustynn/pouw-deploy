@@ -1,5 +1,6 @@
 # Server: login via GitHub and jobs for the PoUW-ZK repositories.
-# Needs a GitHub OAuth App and a GitHub App setup steps are in the README.
+# Needs a GitHub OAuth App and a GitHub App, setup steps:
+# https://pouw-zk.github.io/pouw-docs/server/instalacia.html
 
 jenkins:
   securityRealm:

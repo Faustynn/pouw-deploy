@@ -51,6 +51,6 @@ done <"$root/secrets.list"
 echo
 echo "Server key: $server_fpr"
 if ((${#manual[@]})); then
-    echo "Still to insert by hand (steps in the README, GitHub section):"
+    echo "Still to insert by hand (see https://pouw-zk.github.io/pouw-docs/server/instalacia.html):"
     printf '  pass insert -m %s\n' "${manual[@]}"
 fi

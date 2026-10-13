@@ -5,6 +5,12 @@ jenkins:
   numExecutors: 0
   mode: EXCLUSIVE
   markupFormatter: plainText
+  # Pipelines send e-mails only when SMTP is configured
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: SMTP_HOST
+            value: "${SMTP_HOST}"
   nodes:
     - permanent:
         name: docker-agent
@@ -57,10 +63,11 @@ unclassified:
   location:
     url: "${JENKINS_PUBLIC_URL}"
     # E-mail sender
-    adminAddress: "PoUW Jenkins <${SMTP_FROM:-jenkins@localhost}>"
+    adminAddress: "PoUW Jenkins <${SMTP_FROM}>"
   email-ext:
     mailAccount:
-      smtpHost: "${SMTP_HOST:-}"
+      address: "${SMTP_FROM}"
+      smtpHost: "${SMTP_HOST}"
       smtpPort: "${SMTP_PORT:-587}"
       useTls: true
       credentialsId: smtp
