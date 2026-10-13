@@ -13,6 +13,10 @@ COMPOSE := docker compose
 TEST_PROJECT ?= pouw-test
 TEST := COMPOSE_PROFILES= SECRETS_DIR=.secrets $(COMPOSE) -p $(TEST_PROJECT) -f compose.yml -f compose.test.yml
 
+# e2e/run.sh of the services from these clones (made by `make images`).
+# E2E_SRC=.. runs tests from your working copies next to pouw-deploy.
+E2E_SRC ?= build/src
+
 # With IMAGE_TAG, service images from `make images` are used instead of :main from GHCR
 ifdef IMAGE_TAG
 NODE_VERSION := $(IMAGE_TAG)
@@ -54,10 +58,15 @@ check: ## Validate compose for all profiles and the Prometheus config
 images: ## Build service images from main, e.g. make images test IMAGE_TAG=local
 	./scripts/build-images.sh
 
-test: ## Smoke tests in a separate copy of the network (results in reports/)
+test: ## Smoke and e2e tests of services in a separate copy of the network (results in reports/)
 	SECRETS_SOURCE=local SECRETS_DIR=.secrets ./scripts/secrets.sh
 	$(TEST) up -d --wait --wait-timeout 300
 	JUNIT_XML=reports/smoke.xml ./e2e/smoke.sh $(TEST_PROJECT)
+	@failed=0; for t in $(E2E_SRC)/*/e2e/run.sh; do \
+		[ -x "$$t" ] || continue; \
+		echo "== $$t"; \
+		JUNIT_DIR=reports "$$t" $(TEST_PROJECT) || failed=1; \
+	done; exit $$failed
 
 test-down: ## Remove the test copy of the network
 	$(TEST) down -v --remove-orphans
