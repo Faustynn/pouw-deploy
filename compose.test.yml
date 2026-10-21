@@ -3,3 +3,5 @@ services:
     ports: !reset []
   grafana:
     ports: !reset []
+  hasura:
+    ports: !reset []

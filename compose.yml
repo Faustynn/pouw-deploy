@@ -1,7 +1,7 @@
 name: pouw
 
 # Profiles (COMPOSE_PROFILES in .env):
-#   no profile   monitoring (Prometheus, Grafana)
+#   no profile   network services (Postgres, Hasura) and monitoring (Prometheus, Grafana)
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
 #   proxy        Caddy with HTTPS for Jenkins and Grafana (server only)
 #
@@ -58,20 +58,63 @@ services:
       timeout: 5s
       retries: 10
 
+  # Database of the indexer. No ports: 5432 is open from outside on the FIIT firewall.
+  postgres:
+    <<: *restart
+    image: postgres:${POSTGRES_VERSION:-16}
+    environment:
+      POSTGRES_USER: pouw
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: pouw
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "pouw", "-d", "pouw"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # GraphQL API of the explorer over the indexer database. The image comes from
+  # pouw-dashboard/hasura and applies its metadata on start; with metadata that
+  # does not match the schema it does not start.
+  hasura:
+    <<: *restart
+    image: ghcr.io/pouw-zk/pouw-dashboard-hasura:${DASHBOARD_HASURA_VERSION:-main}
+    # Hasura reads the admin secret and the database URL only from the
+    # environment, so they are loaded from /run/secrets just before the start
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export HASURA_GRAPHQL_ADMIN_SECRET="$$(cat /run/secrets/hasura_admin_secret)"
+        export PG_DATABASE_URL="postgres://pouw:$$(cat /run/secrets/postgres_password)@postgres:5432/pouw"
+        export HASURA_GRAPHQL_METADATA_DATABASE_URL="$$PG_DATABASE_URL"
+        exec docker-entrypoint.sh "$$HGE_BINARY" serve
+    environment:
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "false"
+    secrets:
+      - postgres_password
+      - hasura_admin_secret
+    ports:
+      - "127.0.0.1:${HASURA_PORT:-8081}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 1m
+      retries: 10
+
   # node-1:
   #   image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
   #
   # indexer:
   #   image: ghcr.io/pouw-zk/pouw-indexer:${INDEXER_VERSION:-main}
   #   depends_on: [postgres]
-  #
-  # postgres:
-  #   image: postgres:16
-  #   environment:
-  #     POSTGRES_USER: pouw
-  #     POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-  #     POSTGRES_DB: pouw
-  #   (no ports: 5432 is open from outside on the FIIT firewall)
   #
   # workload:
   #   image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
@@ -187,6 +230,10 @@ networks:
 secrets:
   grafana_admin_password:
     file: ${SECRETS_DIR:-./.secrets}/grafana_admin_password
+  postgres_password:
+    file: ${SECRETS_DIR:-./.secrets}/postgres_password
+  hasura_admin_secret:
+    file: ${SECRETS_DIR:-./.secrets}/hasura_admin_secret
   jenkins_admin_password:
     file: ${SECRETS_DIR:-./.secrets}/jenkins_admin_password
   jenkins_agent_ssh_key:
@@ -211,6 +258,7 @@ secrets:
 volumes:
   prometheus-data:
   grafana-data:
+  postgres-data:
   jenkins-home:
   jenkins-agent-work:
   jenkins-docker-certs:

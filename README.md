@@ -19,12 +19,15 @@ Requirements: Docker with Compose v2.24+, `make`, `openssl`, `ssh-keygen`.
 
 ```bash
 cp .env.example .env
-make up            # Prometheus on http://localhost:9090, Grafana on http://localhost:3000
+make up            # Prometheus on http://localhost:9090, Grafana on http://localhost:3000,
+                   # Hasura (GraphQL) on http://localhost:8081
 make test          # network tests in a separate copy, results in reports/smoke.xml
 make test-down
 ```
 
 Grafana login: `admin` / `.secrets/grafana_admin_password`.
+Hasura admin secret: `.secrets/hasura_admin_secret`. Postgres has no port on
+the host: `docker compose exec postgres psql -U pouw`.
 
 To also run Jenkins locally, set `COMPOSE_PROFILES=jenkins` and
 `JENKINS_LOCAL_BRANCH=<your pushed branch>` in `.env`, then `make up` and open
