@@ -44,6 +44,13 @@ check "grafana and its database" grafana \
 check "grafana connects to prometheus" grafana \
     'wget -qO- "http://admin:$(cat /run/secrets/grafana_admin_password)@localhost:3000/api/datasources/uid/prometheus/health" | grep -q "\"status\": *\"OK\""'
 
+check "postgres accepts connections" postgres \
+    'pg_isready -U pouw -d pouw'
+
+# strict: 500 when the metadata does not match the schema of the indexer
+check "hasura is up and its metadata is consistent" hasura \
+    'curl -fsS "http://localhost:8080/healthz?strict=true"'
+
 if [[ -n "${JUNIT_XML:-}" ]]; then
     mkdir -p "$(dirname "$JUNIT_XML")"
     {

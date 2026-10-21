@@ -23,6 +23,7 @@ NODE_VERSION := $(IMAGE_TAG)
 INDEXER_VERSION := $(IMAGE_TAG)
 WORKLOAD_VERSION := $(IMAGE_TAG)
 DASHBOARD_VERSION := $(IMAGE_TAG)
+DASHBOARD_HASURA_VERSION := $(IMAGE_TAG)
 endif
 
 .PHONY: help secrets up down restart ps logs check images test test-down

@@ -31,7 +31,7 @@ deploy() {
         exit 2
     fi
     for v in "$@"; do
-        if [[ ! "$v" =~ ^(NODE|INDEXER|WORKLOAD|DASHBOARD)_VERSION=sha-[0-9a-f]{7}$ ]]; then
+        if [[ ! "$v" =~ ^(NODE|INDEXER|WORKLOAD|DASHBOARD|DASHBOARD_HASURA)_VERSION=sha-[0-9a-f]{7}$ ]]; then
             echo "Invalid service version: $v" >&2
             exit 2
         fi
