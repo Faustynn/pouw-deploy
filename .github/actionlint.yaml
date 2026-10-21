@@ -1,0 +1,3 @@
+# Labels of our self-hosted runner (scripts/runner-setup.sh)
+self-hosted-runner:
+  labels: [staging]
