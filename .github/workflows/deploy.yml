@@ -1,14 +1,16 @@
 name: Deploy
 
-# Deploy to the FIIT server via SSH. The SSH key stored in GitHub can only run
+# Deploy to the FIIT server. Port 22 is closed from outside, so the job runs on
+# the self-hosted runner on the server itself (scripts/runner-setup.sh) and
+# SSHes to 127.0.0.1. The SSH key stored in GitHub can only run
 # scripts/remote.sh (forced command in authorized_keys); passwords stay in
 # `pass` on the server.
 #
 # Environment "staging":
 #   secret DEPLOY_SSH_KEY       private SSH key
-#   var    DEPLOY_HOST          server address
+#   var    DEPLOY_HOST          127.0.0.1
 #   var    DEPLOY_USER          user the network runs under
-#   var    DEPLOY_KNOWN_HOSTS   output of ssh-keyscan -t ed25519 <host>
+#   var    DEPLOY_KNOWN_HOSTS   "127.0.0.1 " + the server's /etc/ssh/ssh_host_ed25519_key.pub
 
 on:
   workflow_dispatch:
@@ -37,19 +39,19 @@ concurrency:
 jobs:
   deploy:
     name: ${{ inputs.action }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, staging]
     environment: staging
     timeout-minutes: 20
     steps:
+      # The runner is not wiped between jobs, so the key lives only in
+      # RUNNER_TEMP, which the runner empties before and after every job
       - name: SSH key
         env:
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          (umask 077 && printf '%s\n' "$KEY" > "$RUNNER_TEMP/deploy_key")
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
 
       - name: Run ${{ inputs.action }} on the server
         env:
@@ -66,10 +68,13 @@ jobs:
             cmd="deploy $SHA $VERSIONS"
           fi
           set -o pipefail
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$TARGET" "$cmd" | tee out.txt
+          out="$RUNNER_TEMP/out.txt"
+          ssh -i "$RUNNER_TEMP/deploy_key" -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes "$TARGET" "$cmd" | tee "$out"
           {
             echo "### $ACTION"
             echo '```'
-            cat out.txt
+            cat "$out"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
