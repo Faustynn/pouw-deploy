@@ -29,6 +29,12 @@ Grafana login: `admin` / `.secrets/grafana_admin_password`.
 Hasura admin secret: `.secrets/hasura_admin_secret`. Postgres has no port on
 the host: `docker compose exec postgres psql -U pouw`.
 
+The services of the network (node-1, indexer, workload, dashboard) are in the
+`network` profile until their images exist in GHCR. To try them anyway, add
+`network` to `COMPOSE_PROFILES`. When a service gets its image, delete its
+`profiles` line in `compose.yml`, from then on `make up`, the nightly test and
+staging run it.
+
 To also run Jenkins locally, set `COMPOSE_PROFILES=jenkins` and
 `JENKINS_LOCAL_BRANCH=<your pushed branch>` in `.env`, then `make up` and open
 <http://localhost:8080> (`admin` / `.secrets/jenkins_admin_password`).

@@ -4,6 +4,7 @@ name: pouw
 #   no profile   network services (Postgres, Hasura) and monitoring (Prometheus, Grafana)
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
 #   proxy        Caddy with HTTPS for Jenkins and Grafana (server only)
+#   network      node-1, indexer, workload, dashboard until they have images in GHCR
 #
 # Ports are published only on 127.0.0.1. On the FIIT server the range
 # 8000-10000 is open from outside and Docker bypasses ufw, so 0.0.0.0 would
@@ -14,6 +15,15 @@ name: pouw
 
 x-restart: &restart
   restart: unless-stopped
+
+# Healthcheck of the network services: each serves /health on port 8000
+# (pouw-node#63, pouw-indexer#24, pouw-workload#26), its image must contain curl
+x-health: &health
+  test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8000/health"]
+  interval: 10s
+  timeout: 5s
+  start_period: 30s
+  retries: 10
 
 services:
   prometheus:
@@ -109,18 +119,65 @@ services:
       start_period: 1m
       retries: 10
 
-  # node-1:
-  #   image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
-  #
-  # indexer:
-  #   image: ghcr.io/pouw-zk/pouw-indexer:${INDEXER_VERSION:-main}
-  #   depends_on: [postgres]
-  #
-  # workload:
-  #   image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
-  #
-  # dashboard:
-  #   image: ghcr.io/pouw-zk/pouw-dashboard:${DASHBOARD_VERSION:-main}
+  # Services of the network. Until a service has an image in GHCR it is in the
+  # `network` profile, so `make up`, the nightly test and staging do not fail
+  # on pull. Once the image exists, delete its `profiles` line.
+  # Variables marked TODO are not agreed with the owner yet.
+
+  node-1:
+    <<: *restart
+    profiles: [network]
+    image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
+    volumes:
+      - node-1-data:/data # TODO @IliaPoliak: data directory of the node
+    healthcheck: *health
+
+  indexer:
+    <<: *restart
+    profiles: [network]
+    image: ghcr.io/pouw-zk/pouw-indexer:${INDEXER_VERSION:-main}
+    # TODO @NotGeorgeLucas: variable names; the password is only a file in /run/secrets
+    environment:
+      NODE_URL: http://node-1:8000
+      DATABASE_HOST: postgres
+      DATABASE_USER: pouw
+      DATABASE_NAME: pouw
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+      node-1:
+        condition: service_healthy
+    healthcheck: *health
+
+  workload:
+    <<: *restart
+    profiles: [network]
+    image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
+    # TODO @Quolen: variable name. Until the light node runs (W5, pouw-node#101)
+    # this points to the full node.
+    environment:
+      LIGHT_NODE_URL: http://node-1:8000
+    depends_on:
+      node-1:
+        condition: service_healthy
+    healthcheck: *health
+
+  # Explorer UI, nginx on port 8080 (pouw-dashboard/web)
+  dashboard:
+    <<: *restart
+    profiles: [network]
+    image: ghcr.io/pouw-zk/pouw-dashboard:${DASHBOARD_VERSION:-main}
+    depends_on:
+      hasura:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   jenkins:
     <<: *restart
@@ -259,6 +316,7 @@ volumes:
   prometheus-data:
   grafana-data:
   postgres-data:
+  node-1-data:
   jenkins-home:
   jenkins-agent-work:
   jenkins-docker-certs:
