@@ -1,0 +1,11 @@
+# Gitleaks: secret scanning (pre-commit hook + Security workflow).
+# Default rules are kept; add exceptions only after gitleaks actually flags a false positive:
+#
+# [allowlist]
+# description = "Test fixtures that look like secrets but aren't"
+# paths = [
+#   '''(^|/)path/to/fixtures/''',
+# ]
+
+[extend]
+useDefault = true
