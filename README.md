@@ -20,7 +20,7 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 | Service | Repository | Locally | Profile |
 | --- | --- | --- | --- |
 | Postgres | - | `docker compose exec postgres psql -U pouw` | always |
-| Hasura (GraphQL) | pouw-dashboard/hasura | <http://localhost:8081> | always |
+| Hasura (GraphQL of the explorer) | pouw-dashboard/hasura | <http://localhost:8081/v1/graphql> | `network` (needs the indexer's schema) |
 | Prometheus | - | <http://localhost:9090> | always |
 | Grafana | - | <http://localhost:3000> | always |
 | node-1 | pouw-node | inside the network only | `network` |
@@ -36,7 +36,8 @@ Profiles are switched on in `.env` (`COMPOSE_PROFILES=...`). `make dev` adds
 `.env` (`HASURA_PORT`, `INDEXER_PORT`, ...).
 
 Logins: Grafana `admin` / `.secrets/grafana_admin_password`, Hasura admin
-secret `.secrets/hasura_admin_secret`, Jenkins `admin` /
+secret `.secrets/hasura_admin_secret` (queries without it get the read-only
+role `anonymous`, like the explorer), Jenkins `admin` /
 `.secrets/jenkins_admin_password`. The files are created by the first
 `make up`, random for every laptop.
 
@@ -103,7 +104,7 @@ make down           # stop everything, data is kept for the next start
 | --- | --- |
 | see my change of a service in the whole network | `make dev` (from whatever branch each `../pouw-*` is on, uncommitted changes too) |
 | test my change against the other services | `make dev-test`, results in `reports/`, then `make test-down` |
-| only the base (Postgres, Hasura, monitoring), services from GHCR `:main` | `make up` |
+| only the base (Postgres, monitoring) | `make up` |
 | logs of one service | `make logs s=indexer` |
 | what is built from where | `build/versions.txt` |
 | fixture data for the explorer | `make seed` |
@@ -300,5 +301,6 @@ Passwords never go into git or `.env`. Jenkins is configured only through
 | `'bash\r': No such file or directory` | the repository was cloned with CRLF before `.gitattributes`: `git rm --cached -r . && git reset --hard` |
 | Windows: everything is very slow | the clone is under `/mnt/c`, clone it into the WSL home |
 | `unknown tag !override` / `!reset` | Docker Compose older than 2.24.4, update Docker |
+| Grafana shows no dashboards after a `git checkout` / rebase | the running container still mounts the old directory: `make restart` |
 | a service is `unhealthy` | `make logs s=<service>`; `make dev` again after the fix |
 | something is wrong after an update | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |

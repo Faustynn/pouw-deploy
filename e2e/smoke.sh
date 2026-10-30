@@ -20,7 +20,7 @@ xml() {
 }
 
 # Services in profiles (compose.yml), they may be off
-optional=" node-1 indexer workload dashboard node-exporter cadvisor "
+optional=" node-1 indexer hasura workload dashboard node-exporter cadvisor "
 
 # Container of a running service of the project, empty when it does not run
 container() {
@@ -88,6 +88,9 @@ check "the grafana database user is read-only" postgres \
 # strict: 500 when the metadata does not match the schema of the indexer
 check "hasura is up and its metadata is consistent" hasura \
     'curl -fsS "http://localhost:8080/healthz?strict=true"'
+
+check "hasura serves the api views without a token" hasura \
+    "curl -fsS http://localhost:8080/v1/graphql -d '{\"query\": \"{ blocks(limit: 1) { height } }\"}' | grep -q '\"data\"'"
 
 # Every scrape job of monitoring/prometheus/prometheus.yml is a target, also
 # when its service does not run (then the target is down)
