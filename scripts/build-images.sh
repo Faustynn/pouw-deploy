@@ -45,8 +45,11 @@ flags=(--pull)
 mkdir -p "$build"
 : >"$build/versions.txt"
 : >"$build/versions.env"
-echo "# Services without an image, written by scripts/build-images.sh" >"$build/skip.yml"
-echo "services:" >>"$build/skip.yml"
+# Written to a temporary file and moved at the end, so an interrupted build
+# never leaves a half-written skip.yml for make
+skip_yml="$build/skip.yml.tmp"
+echo "# Services without an image, written by scripts/build-images.sh" >"$skip_yml"
+echo "services:" >>"$skip_yml"
 
 # skip <image> <service> <reason>: use :main from GHCR, or do not start the service
 skip() {
@@ -54,7 +57,7 @@ skip() {
         docker tag "ghcr.io/pouw-zk/$1:main" "ghcr.io/pouw-zk/$1:$tag"
         echo "$1 ($3, using :main from GHCR)" | tee -a "$build/versions.txt"
     else
-        printf '  %s:\n    profiles: !override [no-image]\n' "$2" >>"$build/skip.yml"
+        printf '  %s:\n    profiles: !override [no-image]\n' "$2" >>"$skip_yml"
         echo "$1 ($3, not in GHCR either, $2 does not start)" | tee -a "$build/versions.txt"
     fi
 }
@@ -95,4 +98,5 @@ for entry in "${images[@]}"; do
     fi
 done
 # An empty `services:` is not valid compose
-grep -q '^  ' "$build/skip.yml" || echo "services: {}" >"$build/skip.yml"
+grep -q '^  ' "$skip_yml" || echo "services: {}" >"$skip_yml"
+mv -f "$skip_yml" "$build/skip.yml"
