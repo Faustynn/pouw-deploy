@@ -229,11 +229,30 @@ Windows node-exporter measures Docker's Linux VM, not the laptop.
 
 ### Grafana
 
+Dashboards are code: JSON in `monitoring/grafana/dashboards/`, loaded into the
+folder **PoUW** when Grafana starts, no clicking.
+
+| Dashboard | Shows | Data |
+| --- | --- | --- |
+| PoUW · Network | height, block time, transactions/s, proofs per block, miners, latest blocks; per node height, peers, mempool, verification time | indexer database; node metrics of `node-api.md` (`pouw_node_*`) |
+| PoUW · Services | which targets are up, indexer lag (node vs indexer height, block-to-database delay), CPU, memory, network and restarts of every container | Prometheus, cAdvisor, indexer database |
+| PoUW · Server | CPU, RAM, disks, disk I/O, network, load | node-exporter |
+
+The stats of the last 100 blocks do not depend on the time range, so the
+fixture blocks of `make seed` are visible right away. Panels of metrics that
+a service does not serve yet stay empty until it does.
+
 The datasource **Indexer (Postgres)** reads the indexer tables as the user
 `grafana` (ADR-0008), which can only read: SELECT on the tables, every
 transaction read-only. `grafana-db-user` creates it on every start
 (`monitoring/postgres/grafana-reader.sql`), its password is the secret
 `grafana_db_password`.
+
+To change a dashboard: edit it in Grafana, then Share → Export → Save to file
+(or Dashboard settings → JSON Model) and replace the file in
+`monitoring/grafana/dashboards/`. Keep `uid`, the datasource uids
+`prometheus` and `indexer`, and run `make up` to check it loads. A dashboard
+saved only in the UI is lost when the Grafana volume is recreated.
 
 ## Commands
 
