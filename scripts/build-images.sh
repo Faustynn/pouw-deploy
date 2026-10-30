@@ -51,14 +51,35 @@ skip_yml="$build/skip.yml.tmp"
 echo "# Services without an image, written by scripts/build-images.sh" >"$skip_yml"
 echo "services:" >>"$skip_yml"
 
+# Services that cannot run without another one: Hasura tracks the views that
+# the indexer's migrations create
+dependents() {
+    case "$1" in
+        indexer) echo hasura ;;
+    esac
+}
+
+# off <service> <reason>: the service (and what needs it) does not start
+stopped=" "
+off() {
+    local d
+    [[ "$stopped" == *" $1 "* ]] && return
+    stopped+="$1 "
+    printf '  %s:\n    profiles: !override [no-image]\n' "$1" >>"$skip_yml"
+    echo "  $1 does not start ($2)" | tee -a "$build/versions.txt"
+    for d in $(dependents "$1"); do
+        off "$d" "needs $1"
+    done
+}
+
 # skip <image> <service> <reason>: use :main from GHCR, or do not start the service
 skip() {
     if docker pull -q "ghcr.io/pouw-zk/$1:main" >/dev/null 2>&1; then
         docker tag "ghcr.io/pouw-zk/$1:main" "ghcr.io/pouw-zk/$1:$tag"
         echo "$1 ($3, using :main from GHCR)" | tee -a "$build/versions.txt"
     else
-        printf '  %s:\n    profiles: !override [no-image]\n' "$2" >>"$skip_yml"
-        echo "$1 ($3, not in GHCR either, $2 does not start)" | tee -a "$build/versions.txt"
+        echo "$1 ($3, not in GHCR either)" | tee -a "$build/versions.txt"
+        off "$2" "no image"
     fi
 }
 
