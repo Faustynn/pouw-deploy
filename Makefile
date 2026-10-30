@@ -20,6 +20,9 @@ comma := ,
 # them with the `network` profile. `make dev` and `make dev-test` set it.
 ifdef SRC
 IMAGE_TAG ?= local
+# := and not ?=: make dev runs a sub-make, which inherits E2E_SRC=build/src
+# exported by the parent
+E2E_SRC := $(SRC)
 override COMPOSE_PROFILES := $(if $(COMPOSE_PROFILES),$(COMPOSE_PROFILES)$(comma))network
 TEST_PROFILES ?= network
 endif
@@ -30,8 +33,8 @@ TEST_PROJECT ?= pouw-test
 TEST = COMPOSE_PROFILES=$(TEST_PROFILES) SECRETS_DIR=.secrets $(COMPOSE) -f compose.test.yml -p $(TEST_PROJECT)
 
 # e2e/run.sh of the services from these clones (made by `make images`),
-# with SRC from your working copies
-E2E_SRC ?= $(or $(SRC),build/src)
+# with SRC from your working copies (set above)
+E2E_SRC ?= build/src
 
 # With IMAGE_TAG, service images from `make images` are used instead of :main from GHCR
 ifdef IMAGE_TAG
