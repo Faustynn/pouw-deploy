@@ -2,7 +2,9 @@
 # Prepares the secret files for docker compose (secrets:) according to secrets.list.
 #
 #   SECRETS_SOURCE=local  (default) random passwords in ./.secrets, created only once
-#   SECRETS_SOURCE=pass   server: decrypts passwords from pass into SECRETS_DIR (tmpfs)
+#   SECRETS_SOURCE=pass   server: decrypts passwords from pass into SECRETS_DIR (tmpfs);
+#                         a random-kind password not in pass yet is generated there,
+#                         so a new line in secrets.list needs no manual step
 #
 # No values are ever printed. Runs before every `docker compose up`
 # and at server start (systemd pouw-secrets.service).
@@ -40,6 +42,10 @@ while read -r name path kind; do
             ;;
         random | manual)
             if [[ "$source_" == pass ]]; then
+                if [[ "$kind" == random ]] && ! pass show "$path" >/dev/null 2>&1 &&
+                    pass generate --no-symbols "$path" 32 >/dev/null 2>&1; then
+                    echo "Generated in pass: $path"
+                fi
                 if pass show "$path" >/dev/null 2>&1; then
                     # no trailing newline, otherwise it would become part of the password
                     printf '%s' "$(pass show "$path")" | write "$name"
