@@ -96,11 +96,13 @@ test: ## Smoke and e2e tests in a separate copy of the network (results in repor
 	SECRETS_SOURCE=local SECRETS_DIR=.secrets ./scripts/secrets.sh
 	$(TEST) up -d --wait --wait-timeout 300
 	JUNIT_XML=reports/smoke.xml ./e2e/smoke.sh $(TEST_PROJECT)
-	@failed=0; for t in $(E2E_SRC)/*/e2e/run.sh; do \
+	@failed=0; found=0; for t in $(E2E_SRC)/*/e2e/run.sh; do \
 		[ -x "$$t" ] || continue; \
-		echo "== $$t"; \
+		found=1; echo "== $$t"; \
 		JUNIT_DIR=reports "$$t" $(TEST_PROJECT) || failed=1; \
-	done; exit $$failed
+	done; \
+	[ $$found = 1 ] || echo "WARNING: no e2e/run.sh in $(E2E_SRC)/*, only the smoke tests ran"; \
+	exit $$failed
 
 test-down: ## Remove the test copy of the network
 	$(TEST) down -v --remove-orphans
