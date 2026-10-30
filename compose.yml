@@ -4,6 +4,7 @@ name: pouw
 #   no profile   network services (Postgres, Hasura) and monitoring (Prometheus, Grafana)
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
 #   proxy        Caddy with HTTPS for Jenkins and Grafana (server only)
+#   host-metrics node-exporter (the server) and cAdvisor (its containers) for Prometheus
 #   network      node-1, indexer, workload, dashboard until they have images in GHCR
 #                (`make dev` builds them from your working copies and adds this profile)
 #
@@ -67,6 +68,44 @@ services:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
+      retries: 10
+
+  # Metrics of the machine. On Docker Desktop (macOS, Windows) the machine is
+  # Docker's Linux VM, not the laptop. No ports, only Prometheus reads it.
+  node-exporter:
+    <<: *restart
+    profiles: [host-metrics]
+    image: quay.io/prometheus/node-exporter:${NODE_EXPORTER_VERSION:-v1.12.1}
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro
+
+  # Metrics of every container on the machine. It finds the containers through
+  # the Docker and containerd sockets, which Docker Desktop maps to its VM; a
+  # mount of the whole /var/run would be the laptop's directory on macOS.
+  cadvisor:
+    <<: *restart
+    profiles: [host-metrics]
+    image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION:-v0.55.1}
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
       retries: 10
 
   # Database of the indexer. No ports: 5432 is open from outside on the FIIT firewall.
@@ -167,6 +206,8 @@ services:
       NODE_URL: http://node-1:8000
     secrets:
       - postgres_password
+    ports:
+      - "127.0.0.1:${INDEXER_PORT:-8083}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -191,6 +232,8 @@ services:
     <<: *restart
     profiles: [network]
     image: ghcr.io/pouw-zk/pouw-dashboard:${DASHBOARD_VERSION:-main}
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-8082}:8080"
     depends_on:
       hasura:
         condition: service_healthy

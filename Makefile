@@ -79,7 +79,7 @@ logs: ## Logs, e.g. make logs s=jenkins
 	$(COMPOSE) logs -f --tail=200 $(s)
 
 check: ## Validate compose for all profiles and the Prometheus config
-	COMPOSE_PROFILES=jenkins,proxy,network $(COMPOSE) config -q
+	COMPOSE_PROFILES=jenkins,proxy,network,host-metrics $(COMPOSE) config -q
 	docker run --rm -v "$(CURDIR)/monitoring/prometheus:/etc/prometheus:ro" \
 		--entrypoint promtool quay.io/prometheus/prometheus:v3.0.0 \
 		check config /etc/prometheus/prometheus.yml

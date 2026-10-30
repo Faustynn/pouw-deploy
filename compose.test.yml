@@ -5,3 +5,7 @@ services:
     ports: !reset []
   hasura:
     ports: !reset []
+  indexer:
+    ports: !reset []
+  dashboard:
+    ports: !reset []
