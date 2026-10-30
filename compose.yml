@@ -170,7 +170,8 @@ services:
         exec docker-entrypoint.sh "$$HGE_BINARY" serve
     environment:
       HASURA_GRAPHQL_ENABLE_CONSOLE: "false"
-      # Requests without a token (the explorer) get the read-only role of the metadata
+      # Requests without a token (the explorer) get the read-only role of the
+      # metadata. The image sets it too (pouw-dashboard#95), this covers older images.
       HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
     secrets:
       - postgres_password
