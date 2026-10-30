@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci-ok:
-    name: ci-ok
+  config:
+    name: config
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,3 +25,96 @@ jobs:
 
       - name: Validate compose and Prometheus config
         run: make check
+
+  # The team works on Linux, macOS and Windows (WSL 2). Scripts and the Makefile
+  # must run with macOS bash 3.2 and make 3.81, and a Windows checkout
+  # (core.autocrlf=true) must keep LF, otherwise scripts break in containers.
+  portability:
+    name: portability (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Line endings are LF in the checkout
+        run: |
+          bad="$(git ls-files --eol | awk '$2 == "w/crlf" && $NF !~ /\.(bat|cmd|ps1)$/ { print $NF }')"
+          if [ -n "$bad" ]; then
+            echo "::error::CRLF in the checkout (see .gitattributes): $bad"
+            exit 1
+          fi
+
+      - name: Scripts parse
+        run: |
+          echo "bash $BASH_VERSION"
+          for f in scripts/*.sh e2e/*.sh; do bash -n "$f"; done
+
+      - name: Secrets are generated
+        if: runner.os != 'Windows'
+        run: ./scripts/secrets.sh
+
+      - name: Makefile
+        if: runner.os != 'Windows'
+        run: |
+          make --version | head -1
+          make help
+          make -n dev dev-test up test seed down >/dev/null
+
+  # The whole network on Linux from main of every service: built from source
+  # (make dev), smoke and e2e tests, plus node-exporter and cAdvisor
+  network:
+    name: network
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Service repositories next to pouw-deploy
+        run: |
+          for r in pouw-node pouw-indexer pouw-workload pouw-dashboard; do
+            git clone -q --depth 1 "https://github.com/PoUW-ZK/$r.git" "../$r"
+          done
+
+      - name: make dev (build every service, start the network with host-metrics)
+        run: make dev COMPOSE_PROFILES=host-metrics
+
+      - name: Smoke tests of the running network
+        run: JUNIT_XML=reports/network.xml ./e2e/smoke.sh pouw
+
+      - name: Tests in a separate copy (make test)
+        run: make test SRC=..
+
+      - name: Logs
+        if: failure()
+        run: |
+          docker compose --profile network --profile host-metrics logs --no-color --tail=200
+          docker compose -p pouw-test logs --no-color --tail=200
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            reports/
+            build/versions.txt
+          if-no-files-found: ignore
+
+  # The check required for merge (ruleset protect-main)
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [config, portability, network]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || exit 1; done
