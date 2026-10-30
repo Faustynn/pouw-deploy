@@ -5,6 +5,7 @@ name: pouw
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
 #   proxy        Caddy with HTTPS for Jenkins and Grafana (server only)
 #   network      node-1, indexer, workload, dashboard until they have images in GHCR
+#                (`make dev` builds them from your working copies and adds this profile)
 #
 # Ports are published only on 127.0.0.1. On the FIIT server the range
 # 8000-10000 is open from outside and Docker bypasses ufw, so 0.0.0.0 would
@@ -112,6 +113,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The indexer creates the schema that the metadata tracks. Skipped while
+      # the indexer is in the `network` profile and that profile is off.
+      indexer:
+        condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/healthz"]
       interval: 10s
@@ -124,25 +130,41 @@ services:
   # on pull. Once the image exists, delete its `profiles` line.
   # Variables marked TODO are not agreed with the owner yet.
 
+  # Variables: pouw-node/README.md. The store stays in memory (POUW_STORE)
+  # until the RocksDB backend exists (pouw-node#69); /data holds the node key.
   node-1:
     <<: *restart
     profiles: [network]
     image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
+    environment:
+      POUW_NODE_ID: node-1
+      POUW_DATA_DIR: /data
     volumes:
-      - node-1-data:/data # TODO @IliaPoliak: data directory of the node
-    healthcheck: *health
+      - node-1-data:/data
+    # TODO pouw-node#59: the node has no REST API yet, so /health is not served
+    # and healthy only means the process runs. Then: healthcheck: *health
+    healthcheck:
+      <<: *health
+      test: ["CMD-SHELL", "kill -0 1"]
 
   indexer:
     <<: *restart
     profiles: [network]
     image: ghcr.io/pouw-zk/pouw-indexer:${INDEXER_VERSION:-main}
-    # TODO @NotGeorgeLucas: variable names; the password is only a file in /run/secrets
+    # The indexer reads the database only from DATABASE_URL, so the URL is put
+    # together from /run/secrets just before the start, as for Hasura. It runs
+    # its migrations on start. Fixture blocks: make seed
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export DATABASE_URL="postgres://pouw:$$(cat /run/secrets/postgres_password)@postgres:5432/pouw"
+        exec pouw-indexer "$$@"
+      - pouw-indexer
+    command: [serve]
     environment:
+      # TODO @NotGeorgeLucas: variable name, the indexer does not read the node yet
       NODE_URL: http://node-1:8000
-      DATABASE_HOST: postgres
-      DATABASE_USER: pouw
-      DATABASE_NAME: pouw
-      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
     depends_on:
@@ -156,8 +178,7 @@ services:
     <<: *restart
     profiles: [network]
     image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
-    # TODO @Quolen: variable name. Until the light node runs (W5, pouw-node#101)
-    # this points to the full node.
+    # Until the light node runs (W5, pouw-node#101) this points to the full node
     environment:
       LIGHT_NODE_URL: http://node-1:8000
     depends_on:
