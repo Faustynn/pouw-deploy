@@ -8,8 +8,10 @@ SHELL := /bin/bash
 export
 
 # With IMAGE_TAG, build/skip.yml from `make images` keeps the services that have
-# no image at all (neither built nor in GHCR) from starting
-SKIP_FILE = $(if $(and $(IMAGE_TAG),$(wildcard build/skip.yml)),-f build/skip.yml)
+# no image at all (neither built nor in GHCR) from starting. $(shell) and not
+# $(wildcard): make caches directories at start and would miss the file that
+# `make images` writes in the same run (make dev).
+SKIP_FILE = $(if $(IMAGE_TAG),$(shell [ -f build/skip.yml ] && echo -f build/skip.yml))
 COMPOSE = docker compose -f compose.yml $(SKIP_FILE)
 comma := ,
 
