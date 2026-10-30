@@ -227,6 +227,14 @@ A service that adds `/metrics` on that port shows up without any change here.
 On the server `host-metrics` is on. On a laptop it is optional; on macOS and
 Windows node-exporter measures Docker's Linux VM, not the laptop.
 
+### Grafana
+
+The datasource **Indexer (Postgres)** reads the indexer tables as the user
+`grafana` (ADR-0008), which can only read: SELECT on the tables, every
+transaction read-only. `grafana-db-user` creates it on every start
+(`monitoring/postgres/grafana-reader.sql`), its password is the secret
+`grafana_db_password`.
+
 ## Commands
 
 ```text

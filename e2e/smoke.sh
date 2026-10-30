@@ -72,6 +72,13 @@ check "grafana connects to prometheus" grafana \
 check "postgres accepts connections" postgres \
     'pg_isready -U pouw -d pouw'
 
+# Postgres datasource: logs in as the read-only user grafana (ADR-0008)
+check "grafana reads the indexer database" grafana \
+    'wget -qO- "http://admin:$(cat /run/secrets/grafana_admin_password)@localhost:3000/api/datasources/uid/indexer/health" | grep -q "\"status\": *\"OK\""'
+
+check "the grafana database user is read-only" postgres \
+    "psql -U pouw -d pouw -tAc \"SELECT rolsuper OR rolcreatedb OR rolcreaterole OR NOT ('default_transaction_read_only=on' = ANY(coalesce(rolconfig, '{}'))) OR EXISTS (SELECT FROM information_schema.role_table_grants WHERE grantee = 'grafana' AND privilege_type <> 'SELECT') FROM pg_roles WHERE rolname = 'grafana'\" | grep -qx f"
+
 # strict: 500 when the metadata does not match the schema of the indexer
 check "hasura is up and its metadata is consistent" hasura \
     'curl -fsS "http://localhost:8080/healthz?strict=true"'

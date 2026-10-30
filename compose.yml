@@ -55,6 +55,8 @@ services:
       GF_SERVER_ROOT_URL: ${GRAFANA_URL:-http://localhost:3000/}
     secrets:
       - grafana_admin_password
+      # Postgres datasource (monitoring/grafana/provisioning/datasources/postgres.yml)
+      - grafana_db_password
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
@@ -64,6 +66,8 @@ services:
     depends_on:
       prometheus:
         condition: service_healthy
+      grafana-db-user:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 10s
@@ -125,6 +129,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Read-only user `grafana` in the indexer database (ADR-0008). Runs on every
+  # start, creates or updates the user and its password, then exits.
+  grafana-db-user:
+    image: postgres:${POSTGRES_VERSION:-16}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        PGPASSWORD="$$(cat /run/secrets/postgres_password)" exec psql -h postgres -U pouw -d pouw \
+          -v ON_ERROR_STOP=1 -q -v pw="$$(cat /run/secrets/grafana_db_password)" -f /grafana-reader.sql
+    secrets:
+      - postgres_password
+      - grafana_db_password
+    volumes:
+      - ./monitoring/postgres/grafana-reader.sql:/grafana-reader.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # GraphQL API of the explorer over the indexer database. The image comes from
   # pouw-dashboard/hasura and applies its metadata on start; with metadata that
@@ -353,6 +376,8 @@ secrets:
     file: ${SECRETS_DIR:-./.secrets}/grafana_admin_password
   postgres_password:
     file: ${SECRETS_DIR:-./.secrets}/postgres_password
+  grafana_db_password:
+    file: ${SECRETS_DIR:-./.secrets}/grafana_db_password
   hasura_admin_secret:
     file: ${SECRETS_DIR:-./.secrets}/hasura_admin_secret
   jenkins_admin_password:
