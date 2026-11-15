@@ -26,7 +26,7 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 | node-1 | pouw-node | inside the network only | always |
 | indexer | pouw-indexer | <http://localhost:8083> | always |
 | workload | pouw-workload | inside the network only | always |
-| dashboard (explorer) | pouw-dashboard/web | <http://localhost:8082> | `network` (no image yet) |
+| dashboard (explorer) | pouw-dashboard/web | <http://localhost:8082> | always |
 | node-exporter, cAdvisor | - | Prometheus → Targets | `host-metrics` |
 | Jenkins | - | <http://localhost:8080> | `jenkins` |
 | Caddy (HTTPS) | - | server only | `proxy` |
@@ -129,15 +129,14 @@ make down           # stop everything, data is kept for the next start
 | try a change of Jenkins | `COMPOSE_PROFILES=jenkins` and `JENKINS_LOCAL_BRANCH=<pushed branch>` in `.env`, `make up`, <http://localhost:8080> |
 
 `make dev` = `make images up SRC=..`. An image that cannot be built from your
-working copy (no `Dockerfile` yet, e.g. the dashboard before `web/` has a
-project) is taken from GHCR `:main`; when there is none, the service is not
-started and `build/versions.txt` says why.
+working copy (no `Dockerfile` yet) is taken from GHCR `:main`; when there is
+none, the service is not started and `build/versions.txt` says why.
 
 Without `SRC` (`make up`, Jenkins, staging) the services come from GHCR,
 published from `main` by `docker.yml` of each repository. A new service stays
-in the `network` profile until its image is published (now only the
-dashboard). Then delete its `profiles: [network]` line in `compose.yml`, from
-then on `make up`, the nightly test and staging run it.
+in the `network` profile until its image is published (none is there right
+now). Then delete its `profiles: [network]` line in `compose.yml`, from then on
+`make up`, the nightly test and staging run it.
 
 ## Tests: what goes where and who runs it
 
@@ -272,6 +271,28 @@ To change a dashboard: edit it in Grafana, then Share → Export → Save to fil
 `prometheus` and `indexer`, and run `make up` to check it loads. A dashboard
 saved only in the UI is lost when the Grafana volume is recreated.
 
+### Panels embedded in the explorer
+
+Visitors without a login are Viewers of a separate organization, **Public**. It
+has only the dashboards in `monitoring/grafana/public-org/dashboards/` and only
+Prometheus. The team dashboards and the database stay in the main organization
+behind the password.
+
+Keep it that way: a Viewer can send any query to every datasource of its
+organization, not only the queries of the panels. So never add the Postgres
+datasource to Public, and remember that anyone can read all metrics in
+Prometheus. Datasource permissions exist only in Grafana Enterprise.
+
+`monitoring/grafana/public-org/setup.sh` creates the organization through the
+API on every start of Grafana, and the container is healthy only after it
+succeeds. To add a panel, change the JSON there and run `make up`. To embed it:
+
+```html
+<iframe src="https://grafana.147-175-151-18.sslip.io/d-solo/pouw-public/x?orgId=2&panelId=1"></iframe>
+```
+
+Through the proxy only the explorer (`EXPLORER_HOST`) may embed Grafana.
+
 ## Commands
 
 ```text
@@ -285,7 +306,7 @@ make restart    Restart services, e.g. after a password change in pass
 make seed       Load the fixture blocks of pouw-indexer into the running network
 make ps         Service status
 make logs       Logs, e.g. make logs s=jenkins
-make check      Validate compose for all profiles and the Prometheus config
+make check      Validate compose for all profiles, the Prometheus config and the Caddyfile
 make images     Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
 make test       Smoke and e2e tests in a separate copy of the network (results in reports/)
 make test-down  Remove the test copy of the network
@@ -297,10 +318,12 @@ make test-down  Remove the test copy of the network
 | --- | --- |
 | Jenkins | <https://jenkins.147-175-151-18.sslip.io> (GitHub login) |
 | Grafana | <https://grafana.147-175-151-18.sslip.io> |
+| Explorer | <https://explorer.147-175-151-18.sslip.io> (GraphQL on `/v1/graphql`, the rest of Hasura is not reachable from outside) |
 
 Changes reach the server only through `main`: every evening Jenkins builds
 `main` of all services, runs the smoke and e2e tests and, if they pass, the
-Deploy workflow deploys exactly those versions. Manual deploy, rollback,
+Deploy workflow deploys exactly those versions. After `make up` the deploy runs
+the smoke tests; if they fail, the previous version is restored. Manual deploy, rollback,
 restart and status: GitHub → Actions → Deploy. Server setup, passwords and
 operations are in [pouw-docs → Server](https://pouw-zk.github.io/pouw-docs/server/).
 

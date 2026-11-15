@@ -1,11 +1,12 @@
 name: pouw
 
 # Profiles (COMPOSE_PROFILES in .env):
-#   no profile   network services (Postgres, Hasura) and monitoring (Prometheus, Grafana)
+#   no profile   the network (Postgres, Hasura, node-1, indexer, workload, the
+#                explorer) and monitoring (Prometheus, Grafana)
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
-#   proxy        Caddy with HTTPS for Jenkins and Grafana (server only)
+#   proxy        Caddy with HTTPS for Jenkins, Grafana and the explorer (server only)
 #   host-metrics node-exporter (the server) and cAdvisor (its containers) for Prometheus
-#   network      services without an image in GHCR yet (dashboard)
+#   network      services without an image in GHCR yet (none right now)
 #                (`make dev` builds them from your working copies and adds this profile)
 #
 # Ports are published only on 127.0.0.1. On the FIIT server the range
@@ -48,11 +49,26 @@ services:
   grafana:
     <<: *restart
     image: grafana/grafana:${GRAFANA_VERSION:-11.3.0}
+    # setup.sh needs the running API. It is not a service of its own because
+    # `up --wait` fails on a one-shot container nothing depends on.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        /bin/sh /public-org/setup.sh &
+        exec /run.sh
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: ${GRAFANA_URL:-http://localhost:3000/}
+      # Panels embedded in the explorer, without a login. Anonymous visitors are
+      # Viewers of the organization Public only (monitoring/grafana/public-org).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: Public
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_ANONYMOUS_HIDE_VERSION: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
     secrets:
       - grafana_admin_password
       # Postgres datasource (monitoring/grafana/provisioning/datasources/postgres.yml)
@@ -60,6 +76,7 @@ services:
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./monitoring/grafana/public-org:/public-org:ro
       - grafana-data:/var/lib/grafana
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
@@ -68,8 +85,9 @@ services:
         condition: service_healthy
       grafana-db-user:
         condition: service_completed_successfully
+    # Healthy only with the organization Public, so a failed setup.sh fails the deploy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health && test -f /tmp/public-org-ready"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -272,10 +290,10 @@ services:
       workload:
         condition: service_healthy
 
-  # Explorer UI, nginx on port 8080 (pouw-dashboard/web)
+  # Explorer UI, nginx on port 8080 (pouw-dashboard/web). On staging the proxy
+  # serves it on EXPLORER_HOST together with /v1/graphql of Hasura.
   dashboard:
     <<: *restart
-    profiles: [network]
     image: ghcr.io/pouw-zk/pouw-dashboard:${DASHBOARD_VERSION:-main}
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-8082}:8080"
@@ -381,6 +399,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:-admin@localhost}
       JENKINS_HOST: ${JENKINS_HOST:-jenkins.localhost}
       GRAFANA_HOST: ${GRAFANA_HOST:-grafana.localhost}
+      EXPLORER_HOST: ${EXPLORER_HOST:-explorer.localhost}
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

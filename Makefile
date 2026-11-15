@@ -83,11 +83,15 @@ ps: ## Service status
 logs: ## Logs, e.g. make logs s=jenkins
 	$(COMPOSE) logs -f --tail=200 $(s)
 
-check: ## Validate compose for all profiles and the Prometheus config
+check: ## Validate compose for all profiles, the Prometheus config and the Caddyfile
 	COMPOSE_PROFILES=jenkins,proxy,network,host-metrics $(COMPOSE) config -q
 	docker run --rm -v "$(CURDIR)/monitoring/prometheus:/etc/prometheus:ro" \
 		--entrypoint promtool quay.io/prometheus/prometheus:v3.0.0 \
 		check config /etc/prometheus/prometheus.yml
+	docker run --rm -v "$(CURDIR)/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+		-e ACME_EMAIL=admin@localhost -e JENKINS_HOST=jenkins.localhost \
+		-e GRAFANA_HOST=grafana.localhost -e EXPLORER_HOST=explorer.localhost \
+		caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
 images: ## Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
 	./scripts/build-images.sh

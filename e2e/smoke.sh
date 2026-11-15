@@ -20,7 +20,7 @@ xml() {
 }
 
 # Services in profiles (compose.yml), they may be off
-optional=" dashboard node-exporter cadvisor "
+optional=" node-exporter cadvisor "
 
 # Container of a running service of the project, empty when it does not run
 container() {
@@ -92,6 +92,27 @@ check "hasura is up and its metadata is consistent" hasura \
 check "hasura serves the api views without a token" hasura \
     "curl -fsS http://localhost:8080/v1/graphql -d '{\"query\": \"{ blocks(limit: 1) { height } }\"}' | grep -q '\"data\"'"
 
+check "hasura has no console" hasura \
+    "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/console | grep -qx 404"
+
+# Without a token the schema has no mutations at all, so nothing can be written
+check "anonymous clients cannot write through hasura" hasura \
+    "curl -fsS http://localhost:8080/v1/graphql -d '{\"query\": \"{ __schema { mutationType { name } } }\"}' | grep -q '\"mutationType\":null'"
+
+# Anonymous visitors of Grafana (the panels embedded in the explorer)
+check "grafana shows the public dashboard without a login" grafana \
+    "wget -qO- http://localhost:3000/api/dashboards/uid/pouw-public | grep -q '\"uid\":\"pouw-public\"'"
+
+check "grafana hides the team dashboards from anonymous visitors" grafana \
+    "! wget -qO- 'http://localhost:3000/api/search?type=dash-db' | grep -qE 'pouw-(network|services|server)'"
+
+# The datasource is what matters: a Viewer can send it any SQL
+check "anonymous visitors of grafana cannot query the database" grafana \
+    "! wget -qO- --header 'Content-Type: application/json' --header 'X-Grafana-Org-Id: 1' --post-data '{\"from\":\"now-1h\",\"to\":\"now\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"uid\":\"indexer\"},\"rawSql\":\"SELECT 1\",\"format\":\"table\"}]}' http://localhost:3000/api/ds/query 2>/dev/null | grep -q frames"
+
+check "grafana admin API needs the password" grafana \
+    "! wget -qO /dev/null http://localhost:3000/api/admin/settings 2>/dev/null"
+
 # Every scrape job of monitoring/prometheus/prometheus.yml is a target, also
 # when its service does not run (then the target is down)
 for job in prometheus pouw-node pouw-indexer pouw-workload node-exporter cadvisor; do
@@ -129,6 +150,11 @@ check "workload is healthy" workload \
 
 check "dashboard serves the explorer" dashboard \
     'wget -qO /dev/null http://localhost:8080/'
+
+# The explorer asks /v1/graphql on its own host: on staging the proxy sends it
+# to Hasura, elsewhere the nginx of the explorer does
+check "the explorer reaches hasura" dashboard \
+    "wget -qO- --header 'Content-Type: application/json' --post-data '{\"query\": \"{ blocks(limit: 1) { height } }\"}' http://localhost:8080/v1/graphql | grep -q '\"data\"'"
 
 if [[ -n "${JUNIT_XML:-}" ]]; then
     mkdir -p "$(dirname "$JUNIT_XML")"
