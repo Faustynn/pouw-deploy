@@ -35,6 +35,21 @@ Profiles are switched on in `.env` (`COMPOSE_PROFILES=...`). `make dev` adds
 `network` itself. All ports are on `127.0.0.1` only, they can be changed in
 `.env` (`HASURA_PORT`, `INDEXER_PORT`, ...).
 
+For a one-hour read-only soak, run:
+
+```bash
+docker compose --profile soak run --rm workload-soak
+```
+
+It starts the `soak` scenario and fails on early termination,
+read failures, or rejected arrivals. Inspect node and generator memory and
+latency in Grafana separately; a successful command alone does not establish
+that memory is stable. The workload defaults to `node-1`. Until its read API
+is available, use the WireMock stub with `COMPOSE_PROFILES=mock` and
+`LIGHT_NODE_URL=http://light-node-mock:8080`; it serves the chain-head read
+used by the smoke and soak scenarios. Use the actual light-node URL when its
+read routes are available.
+
 Logins: Grafana `admin` / `.secrets/grafana_admin_password`, Hasura admin
 secret `.secrets/hasura_admin_secret` (queries without it get the read-only
 role `anonymous`, like the explorer), Jenkins `admin` /
