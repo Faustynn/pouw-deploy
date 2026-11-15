@@ -9,3 +9,9 @@
 
 [extend]
 useDefault = true
+
+[allowlist]
+description = "Fixture chain: public test data (mock circuit verifying key, test-only keys), not secrets"
+paths = [
+  '''(^|/)fixtures/chain\.json$''',
+]
