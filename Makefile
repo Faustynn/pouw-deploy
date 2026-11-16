@@ -86,7 +86,7 @@ restart: secrets ## Restart services, e.g. after a password change in pass
 	@mkdir -p -m 700 "$(BACKUP_DIR)"
 	$(COMPOSE) up -d --force-recreate --wait --wait-timeout 300
 
-seed: ## Load the fixture blocks of pouw-indexer into the running network
+seed: ## Fixture blocks of pouw-indexer into the database; never with the devnet, its sync stops
 	$(COMPOSE) --profile network exec -T indexer /bin/sh -c \
 		'DATABASE_URL="postgres://pouw:$$(cat /run/secrets/postgres_password)@postgres:5432/pouw" exec pouw-indexer seed'
 
@@ -133,12 +133,15 @@ test: ## Smoke and e2e tests in a separate copy of the network (results in repor
 	JUNIT_XML=reports/smoke.xml ./e2e/smoke.sh $(TEST_PROJECT)
 	$(TEST) exec -T backup bash /backup.sh once
 	$(TEST_ENV) COMPOSE="$(TEST_COMPOSE)" ./scripts/restore.sh
-	@failed=0; found=0; for t in $(E2E_SRC)/*/e2e/run.sh; do \
+	@failed=0; \
+	echo "== e2e/run.sh (the devnet)"; \
+	JUNIT_DIR=reports ./e2e/run.sh $(TEST_PROJECT) || failed=1; \
+	found=0; for t in $(E2E_SRC)/*/e2e/run.sh; do \
 		[ -x "$$t" ] || continue; \
 		found=1; echo "== $$t"; \
 		JUNIT_DIR=reports "$$t" $(TEST_PROJECT) || failed=1; \
 	done; \
-	[ $$found = 1 ] || echo "WARNING: no e2e/run.sh in $(E2E_SRC)/*, only the smoke tests ran"; \
+	[ $$found = 1 ] || echo "WARNING: no e2e/run.sh in $(E2E_SRC)/*, the e2e tests of the services did not run"; \
 	exit $$failed
 
 test-down: ## Remove the test copy of the network

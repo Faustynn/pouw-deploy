@@ -11,9 +11,9 @@ tests:
   - interval: 15s
     input_series:
       # up for 2 minutes, then down
-      - series: 'up{job="pouw-node", instance="node-1:9100"}'
+      - series: 'up{job="pouw-node", instance="node-1"}'
         values: "1x8 0x20"
-      - series: 'up{job="pouw-node", instance="node-2:9100"}'
+      - series: 'up{job="pouw-node", instance="node-2"}'
         values: "1x28"
     alert_rule_test:
       - eval_time: 3m
@@ -25,9 +25,9 @@ tests:
           - exp_labels:
               severity: critical
               job: pouw-node
-              instance: node-1:9100
+              instance: node-1
             exp_annotations:
-              summary: "Node node-1:9100 is down"
+              summary: "Node node-1 is down"
               description: "Prometheus has not reached the node for 2 minutes."
 
   # ServiceDown: the indexer and the workload
@@ -56,9 +56,9 @@ tests:
   # block (no sync yet) neither hides the stall nor raises it alone.
   - interval: 15s
     input_series:
-      - series: 'pouw_node_height{job="pouw-node", instance="node-1:9100"}'
+      - series: 'pouw_node_height{job="pouw-node", instance="node-1"}'
         values: "0+1x40 40x60"
-      - series: 'pouw_node_height{job="pouw-node", instance="node-2:9100"}'
+      - series: 'pouw_node_height{job="pouw-node", instance="node-2"}'
         values: "0x100"
     alert_rule_test:
       - eval_time: 15m

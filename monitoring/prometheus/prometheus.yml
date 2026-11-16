@@ -20,10 +20,15 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # Network services (profile `network` until their images are in GHCR)
+  # Network services. The devnet: instance="node-1" instead of "node-1:9100"
+  # in Grafana and the alerts
   - job_name: pouw-node
     static_configs:
-      - targets: ["node-1:9100"]
+      - targets: ["node-1:9100", "node-2:9100", "node-3:9100"]
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.+):\d+'
+        target_label: instance
   - job_name: pouw-indexer
     static_configs:
       - targets: ["indexer:8000"]

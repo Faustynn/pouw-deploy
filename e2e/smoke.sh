@@ -176,9 +176,11 @@ if [[ -n "$(container cadvisor)" ]]; then
         "for i in \$(seq 20); do wget -qO- 'http://localhost:9090/api/v1/query?query=count(container_last_seen%7Bname%3D~%22.%2B%22%7D)' | grep -q '\"result\":\[{' && exit 0; sleep 3; done; exit 1"
 fi
 
-# Network services
-# TODO pouw-node#59: curl http://localhost:8000/health once the node serves its API
-check "node-1 is running" node-1 'kill -0 1'
+# Network services. How the devnet behaves (blocks, peers, the indexer behind
+# the node, ...) is tested by e2e/test_devnet.py.
+for n in node-1 node-2 node-3; do
+    check "$n is healthy (REST API)" "$n" 'curl -fsS -o /dev/null http://localhost:8000/health'
+done
 
 check "indexer is healthy (database reachable)" indexer \
     'curl -fsS -o /dev/null http://localhost:8000/health'

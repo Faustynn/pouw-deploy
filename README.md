@@ -26,7 +26,7 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 | Alertmanager (alerts by e-mail) | - | <http://localhost:9093> | always |
 | Grafana | - | <http://localhost:3000> | always |
 | backup (nightly dump of the database) | - | `BACKUP_DIR`, default `./backups` | always |
-| node-1 | pouw-node | inside the network only | always |
+| node-1, node-2, node-3 (the devnet, see below) | pouw-node | inside the network only | always |
 | indexer | pouw-indexer | <http://localhost:8083> | always |
 | workload | pouw-workload | inside the network only | always |
 | dashboard (explorer) | pouw-dashboard/web | <http://localhost:8082> | always |
@@ -58,6 +58,33 @@ secret `.secrets/hasura_admin_secret` (queries without it get the read-only
 role `anonymous`, like the explorer), Jenkins `admin` /
 `.secrets/jenkins_admin_password`. The files are created by the first
 `make up`, random for every laptop.
+
+### The devnet
+
+Three nodes of pouw-node on one chain:
+
+- **Genesis.** The service `genesis` writes the chain spec once, when the volume
+  `devnet` is empty: `devnet/chainspec.json` (a copy of
+  `pouw-node/chainspec/devnet.json`) with the current time as
+  `genesis.timestamp`. The target schedule counts from that time, so a chain
+  started days after its genesis would mine a burst of easy blocks. Every test
+  copy gets a genesis of its own, staging keeps its one in the volume.
+- **Nodes.** Each has its own volume (RocksDB and the node key). node-1 is the
+  bootnode and the only miner, the reward goes to the test key of the
+  contracts (`NODE_MINER_ADDRESS`). node-2 and node-3 dial it
+  (`NODE_BOOTNODES`) and find each other through it. The indexer and the
+  workload read node-1, Prometheus scrapes all three.
+- **Sync.** Until the nodes exchange blocks (pouw-node#86, #90) node-2 and
+  node-3 stay at genesis. Their test `test_nodes_have_the_same_tip` is an
+  expected failure (`xfail`) until then; once it passes, delete the mark.
+
+A new chain (new genesis, empty nodes and indexer database):
+`./scripts/devnet-reset.sh`, it asks first. Needed after a change of
+`devnet/chainspec.json` (keep it equal to
+`../pouw-node/chainspec/devnet.json`), because a node refuses its database
+under another genesis and the indexer stops syncing a chain that shares no
+block with its database. On staging run it once after such a deploy.
+`make seed` mixes fixture blocks into the database, never use it with the devnet.
 
 ## First use
 
@@ -103,7 +130,6 @@ changes or another branch checked out.
 cd pouw-deploy
 cp .env.example .env
 make dev            # builds every service from ../pouw-*, starts the whole network
-make seed           # fixture blocks into the indexer database
 make ps             # everything Up (healthy)
 ```
 
@@ -126,7 +152,8 @@ make down           # stop everything, data is kept for the next start
 | the whole network from GHCR `:main`, without building | `make up` |
 | logs of one service | `make logs SERVICE=indexer`, only the last hour: `SINCE=1h` |
 | what is built from where | `build/versions.txt` |
-| fixture data for the explorer | `make seed` |
+| blocks in the explorer | nothing, node-1 mines one about every 10 s from the start |
+| a new chain (new genesis, empty nodes and indexer) | `./scripts/devnet-reset.sh` |
 | start from an empty database | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |
 | work on one service alone (fast loop) | that repository's README, section Run locally |
 | try a change of Jenkins | `COMPOSE_PROFILES=jenkins` and `JENKINS_LOCAL_BRANCH=<pushed branch>` in `.env`, `make up`, <http://localhost:8080> |
@@ -149,6 +176,7 @@ now). Then delete its `profiles: [network]` line in `compose.yml`, from then on
 | Integration | one service with a real dependency (database, files) | the service repository, CI starts the dependency | GitHub Actions `ci-ok` on every PR | merge of the PR |
 | Image | the `Dockerfile` builds, the container starts and is healthy | `ci-ok` step "Docker image starts" | every PR of the service | merge of the PR |
 | Smoke | the deployed network is up: each service runs, talks to its database, Prometheus sees it | `e2e/smoke.sh` here | Jenkins (PR of pouw-deploy, every evening), `make test`, `make dev-test` | staging deploy |
+| E2E of the devnet | the whole chain: the nodes share genesis and find each other, node-1 mines, the indexer keeps up, Hasura serves the newest block, a subscription gets new blocks, the explorer answers | `e2e/test_devnet.py` here | Jenkins with the smoke tests, `make test` | staging deploy |
 | E2E | behaviour across services through their APIs (submit a task → node mines → indexer → GraphQL) | `e2e/test_*.py` in the service repository | Jenkins with the smoke tests | staging deploy |
 
 ### Unit and integration tests (GitHub Actions, `ci-ok`)
@@ -188,6 +216,13 @@ check "indexer is healthy (database reachable)" indexer \
 - Smoke tests only ask "is it up and wired together". Behaviour belongs to e2e.
 
 Run them against your running network with `./e2e/smoke.sh pouw`.
+
+### E2E tests of the devnet (`e2e/test_devnet.py` in this repository)
+
+pytest, run by `e2e/run.sh` like the e2e tests of the services, results in
+`reports/devnet.xml` (suite `devnet` in Jenkins). They wait for real blocks
+(about 10 s each) with generous timeouts, and a test that fails says what it
+saw last. Against your running network: `./e2e/run.sh pouw`.
 
 ### E2E tests (`e2e/` in each service repository)
 
@@ -237,7 +272,7 @@ service, also for one that does not run: such a target is `down`, not an error.
 
 | Job | Target | Status |
 | --- | --- | --- |
-| `pouw-node` | `node-1:9100/metrics` | down until pouw-node#63 |
+| `pouw-node` | `node-1:9100`, `node-2:9100`, `node-3:9100` (`/metrics`), label `instance="node-1"` ... | the devnet |
 | `pouw-indexer` | `indexer:8000/metrics` | down until the indexer serves `/metrics` |
 | `pouw-workload` | `workload:8001/metrics` | down until the workload serves `/metrics` |
 | `node-exporter` | the machine (CPU, memory, disk) | profile `host-metrics` |
@@ -259,7 +294,7 @@ folder **PoUW** when Grafana starts, no clicking.
 | PoUW · Server | CPU, RAM, disks, disk I/O, network, load | node-exporter |
 
 The stats of the last 100 blocks do not depend on the time range, so the
-fixture blocks of `make seed` are visible right away. Panels of metrics that
+blocks of the devnet are visible right away. Panels of metrics that
 a service does not serve yet stay empty until it does.
 
 The datasource **Indexer (Postgres)** reads the indexer tables as the user
@@ -359,7 +394,7 @@ make secrets      Prepare secrets (random locally, from pass on the server)
 make up           Start services according to COMPOSE_PROFILES
 make down         Stop services of all profiles (data is kept)
 make restart      Restart services, e.g. after a password change in pass
-make seed         Load the fixture blocks of pouw-indexer into the running network
+make seed         Fixture blocks of pouw-indexer into the database; never with the devnet, its sync stops
 make ps           Service status
 make logs         Logs of a service, e.g. make logs SERVICE=indexer [SINCE=1h] (without SERVICE all)
 make check        Validate compose, Prometheus with tests of its alerts, Alertmanager and the Caddyfile

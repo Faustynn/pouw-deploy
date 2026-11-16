@@ -1,8 +1,9 @@
 name: pouw
 
 # Profiles (COMPOSE_PROFILES in .env):
-#   no profile   the network (Postgres, Hasura, node-1, indexer, workload, the
-#                explorer) and monitoring (Prometheus, Grafana)
+#   no profile   the network (the devnet of node-1..3, Postgres, indexer, Hasura,
+#                workload, the explorer), monitoring (Prometheus, Alertmanager,
+#                Grafana) and the nightly backup
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
 #   proxy        Caddy with HTTPS for Jenkins, Grafana and the explorer (server only)
 #   host-metrics node-exporter (the server) and cAdvisor (its containers) for Prometheus
@@ -37,6 +38,23 @@ x-health: &health
   timeout: 5s
   start_period: 30s
   retries: 10
+
+# Nodes of the devnet (node-1..3), variables: pouw-node/README.md. Each node
+# has its own volume (RocksDB and the node key) and reads the chain spec that
+# the service genesis made for this devnet. node-1 is the bootnode and the only
+# miner; node-2 and node-3 dial it (NODE_BOOTNODES) and find each other through it.
+x-node: &node
+  <<: [*restart, *logging]
+  image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
+  depends_on:
+    genesis:
+      condition: service_completed_successfully
+  healthcheck: *health
+
+x-node-env: &node-env
+  POUW_CHAIN_SPEC: /devnet/chainspec.json
+  POUW_DATA_DIR: /data
+  POUW_STORE: rocksdb
 
 services:
   prometheus:
@@ -284,22 +302,51 @@ services:
   # service without an image yet goes into the `network` profile, so `make up`,
   # the nightly test and staging do not fail on pull; once its image exists,
   # delete its `profiles` line.
-  # Variables marked TODO are not agreed with the owner yet.
 
-  # Variables: pouw-node/README.md. The store stays in memory (POUW_STORE)
-  # until the RocksDB backend exists (pouw-node#69); /data holds the node key.
-  node-1:
-    <<: [*restart, *logging]
+  # The chain spec of this devnet, made once for all nodes (devnet/genesis.sh)
+  genesis:
+    <<: *logging
     image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
-    environment:
-      POUW_NODE_ID: node-1
-      POUW_DATA_DIR: /data
+    # Writes into the new volume, which belongs to root
+    user: root
+    entrypoint: ["/bin/sh", "/template/genesis.sh"]
     volumes:
+      - ./devnet:/template:ro
+      - devnet:/devnet
+
+  # Until the nodes sync blocks (pouw-node#86, #90) only node-1 grows, node-2
+  # and node-3 stay at genesis
+  node-1:
+    <<: *node
+    environment:
+      <<: *node-env
+      POUW_NODE_ID: node-1
+      # Reward of the blocks: the test key of the contracts (seed 32 × 0x01,
+      # pouw-docs contracts/block.md), which also holds the genesis allocation
+      POUW_MINER_ADDRESS: ${NODE_MINER_ADDRESS:-addr:8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c}
+    volumes:
+      - devnet:/devnet:ro
       - node-1-data:/data
-    # pouw-node#59 has no REST API yet; until then health means the process runs.
-    healthcheck:
-      <<: *health
-      test: ["CMD-SHELL", "kill -0 1"]
+
+  node-2:
+    <<: *node
+    environment:
+      <<: *node-env
+      POUW_NODE_ID: node-2
+      POUW_BOOTNODES: ${NODE_BOOTNODES:-/dns4/node-1/tcp/30333}
+    volumes:
+      - devnet:/devnet:ro
+      - node-2-data:/data
+
+  node-3:
+    <<: *node
+    environment:
+      <<: *node-env
+      POUW_NODE_ID: node-3
+      POUW_BOOTNODES: ${NODE_BOOTNODES:-/dns4/node-1/tcp/30333}
+    volumes:
+      - devnet:/devnet:ro
+      - node-3-data:/data
 
   # Read-only workload API stub for local development until pouw-light-node
   # serves the contracted read routes. Set LIGHT_NODE_URL to this service.
@@ -325,7 +372,7 @@ services:
       - pouw-indexer
     command: [serve]
     environment:
-      # TODO @NotGeorgeLucas: variable name, the indexer does not read the node yet
+      # It follows the chain of node-1, the miner
       NODE_URL: http://node-1:8000
     secrets:
       - postgres_password
@@ -341,7 +388,7 @@ services:
   workload:
     <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
-    # node-1 serves fixtures until the real light node is available.
+    # Reads from node-1 until the light node is in the devnet (pouw-node#105)
     environment:
       LIGHT_NODE_URL: ${LIGHT_NODE_URL:-http://node-1:8000}
     depends_on:
@@ -518,7 +565,11 @@ volumes:
   alertmanager-data:
   grafana-data:
   postgres-data:
+  # The devnet: its chain spec and the database of each node
+  devnet:
   node-1-data:
+  node-2-data:
+  node-3-data:
   jenkins-home:
   jenkins-agent-work:
   jenkins-docker-certs:
