@@ -11,6 +11,7 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 - [Everyday development](#everyday-development)
 - [Tests: what goes where and who runs it](#tests-what-goes-where-and-who-runs-it)
 - [Monitoring](#monitoring)
+- [Backups and logs](#backups-and-logs)
 - [Commands](#commands)
 - [Staging](#staging)
 - [Troubleshooting](#troubleshooting)
@@ -22,7 +23,9 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 | Postgres | - | `docker compose exec postgres psql -U pouw` | always |
 | Hasura (GraphQL of the explorer) | pouw-dashboard/hasura | <http://localhost:8081/v1/graphql> | always (starts after the indexer) |
 | Prometheus | - | <http://localhost:9090> | always |
+| Alertmanager (alerts by e-mail) | - | <http://localhost:9093> | always |
 | Grafana | - | <http://localhost:3000> | always |
+| backup (nightly dump of the database) | - | `BACKUP_DIR`, default `./backups` | always |
 | node-1 | pouw-node | inside the network only | always |
 | indexer | pouw-indexer | <http://localhost:8083> | always |
 | workload | pouw-workload | inside the network only | always |
@@ -121,7 +124,7 @@ make down           # stop everything, data is kept for the next start
 | see my change of a service in the whole network | `make dev` (from whatever branch each `../pouw-*` is on, uncommitted changes too) |
 | test my change against the other services | `make dev-test`, results in `reports/`, then `make test-down` |
 | the whole network from GHCR `:main`, without building | `make up` |
-| logs of one service | `make logs s=indexer` |
+| logs of one service | `make logs SERVICE=indexer`, only the last hour: `SINCE=1h` |
 | what is built from where | `build/versions.txt` |
 | fixture data for the explorer | `make seed` |
 | start from an empty database | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |
@@ -293,23 +296,79 @@ succeeds. To add a panel, change the JSON there and run `make up`. To embed it:
 
 Through the proxy only the explorer (`EXPLORER_HOST`) may embed Grafana.
 
+### Alerts
+
+Prometheus evaluates the rules in `monitoring/prometheus/rules/` and sends the
+firing alerts to Alertmanager, which e-mails them to `ALERT_EMAIL` through the
+SMTP account of Jenkins (`SMTP_*` in `.env`, username and password in `pass`).
+Without `SMTP_HOST` or `ALERT_EMAIL` (a laptop, the test copies) the alerts are
+only listed on <http://localhost:9093>.
+
+| Alert | Fires when |
+| --- | --- |
+| `NodeDown` | Prometheus has not reached a node for 2 minutes |
+| `ServiceDown` | the same for the indexer or the workload |
+| `ChainStalled` | the height of no node changed for 10 minutes |
+| `IndexerLagging` | the indexer is more than 10 blocks behind the node for 5 minutes |
+| `DiskAlmostFull` | a disk of the server is more than 80 % full for 10 minutes |
+| `ContainerRestarting` | a container restarted more than twice in 15 minutes |
+
+One e-mail per alert name 30 s after it starts, a reminder every 12 hours while
+it lasts and one when it is resolved. `make test-alert` sends a test alert
+through the same path. `make check` runs the tests of the rules in
+`monitoring/prometheus/tests/`: a new rule gets a case where it fires and one
+where it stays quiet. Prometheus reloads the rules on every `make up`.
+
+Silence an alert during planned work:
+
+```bash
+docker compose exec alertmanager amtool silence add alertname=NodeDown \
+  --duration=2h --comment="node upgrade" --alertmanager.url=http://localhost:9093
+```
+
+## Backups and logs
+
+The service `backup` dumps the indexer database every night at `BACKUP_AT`
+(UTC, default 02:00) into `BACKUP_DIR` on the host, outside the Docker volumes,
+and deletes dumps older than 7 days. It makes one right away when the newest
+is older than 20 hours, e.g. after the first start. A dump that fails ends the
+container, Docker restarts it over and over and `ContainerRestarting` fires.
+
+```bash
+make backup                       # a dump now
+make restore-test                 # trial restore of the newest dump into a separate database
+./scripts/restore.sh --replace pouw-20261116T020000Z.dump   # replace the live database
+```
+
+`make test` (and so the nightly build) makes a dump of the test copy and
+restores it every time. After a real restore the indexer continues from the
+last block in the dump and fetches the newer ones from the node; without any
+dump it can rebuild the database from the node too, only slower.
+
+Docker keeps at most 3 log files of 10 MB per container (`x-logging` in
+`compose.yml`), so logs never fill the disk. Read them with
+`make logs SERVICE=indexer`, `SINCE=1h` for the last hour.
+
 ## Commands
 
 ```text
-make help       List of commands
-make dev        Build the services from ../pouw-* and start the whole network locally
-make dev-test   Build the services from ../pouw-* and test them in a separate copy
-make secrets    Prepare secrets (random locally, from pass on the server)
-make up         Start services according to COMPOSE_PROFILES
-make down       Stop services of all profiles (data is kept)
-make restart    Restart services, e.g. after a password change in pass
-make seed       Load the fixture blocks of pouw-indexer into the running network
-make ps         Service status
-make logs       Logs, e.g. make logs s=jenkins
-make check      Validate compose for all profiles, the Prometheus config and the Caddyfile
-make images     Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
-make test       Smoke and e2e tests in a separate copy of the network (results in reports/)
-make test-down  Remove the test copy of the network
+make help         List of commands
+make dev          Build the services from ../pouw-* and start the whole network locally
+make dev-test     Build the services from ../pouw-* and test them in a separate copy
+make secrets      Prepare secrets (random locally, from pass on the server)
+make up           Start services according to COMPOSE_PROFILES
+make down         Stop services of all profiles (data is kept)
+make restart      Restart services, e.g. after a password change in pass
+make seed         Load the fixture blocks of pouw-indexer into the running network
+make ps           Service status
+make logs         Logs of a service, e.g. make logs SERVICE=indexer [SINCE=1h] (without SERVICE all)
+make check        Validate compose, Prometheus with tests of its alerts, Alertmanager and the Caddyfile
+make images       Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
+make backup       Dump the database into BACKUP_DIR now (the service backup does it every night)
+make restore-test Trial restore of the newest dump into a separate database (DUMP=<file> another)
+make test-alert   Send a test alert; with SMTP_HOST and ALERT_EMAIL it arrives by e-mail
+make test         Smoke and e2e tests in a separate copy of the network (results in reports/)
+make test-down    Remove the test copy of the network
 ```
 
 ## Staging
@@ -342,5 +401,5 @@ Passwords never go into git or `.env`. Jenkins is configured only through
 | Windows: everything is very slow | the clone is under `/mnt/c`, clone it into the WSL home |
 | `unknown tag !override` / `!reset` | Docker Compose older than 2.24.4, update Docker |
 | Grafana shows no dashboards after a `git checkout` / rebase | the running container still mounts the old directory: `make restart` |
-| a service is `unhealthy` | `make logs s=<service>`; `make dev` again after the fix |
+| a service is `unhealthy` | `make logs SERVICE=<service>`; `make dev` again after the fix |
 | something is wrong after an update | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |

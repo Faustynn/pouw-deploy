@@ -19,6 +19,16 @@ name: pouw
 x-restart: &restart
   restart: unless-stopped
 
+# Docker keeps the log of a container in a file that grows without a limit.
+# Here at most 3 files of 10 MB per container, the oldest is deleted, so logs
+# never fill the disk. Viewing: make logs SERVICE=<service>
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
 # Healthcheck of the network services: each serves /health on port 8000
 # (pouw-node#63, pouw-indexer#24, pouw-workload#26), its image must contain curl
 x-health: &health
@@ -30,11 +40,13 @@ x-health: &health
 
 services:
   prometheus:
-    <<: *restart
+    <<: [*restart, *logging]
     image: quay.io/prometheus/prometheus:${PROMETHEUS_VERSION:-v3.0.0}
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=15d
+      # Links in the alert e-mails; on the server through an SSH tunnel
+      - --web.external-url=http://localhost:9090
     volumes:
       - ./monitoring/prometheus:/etc/prometheus:ro
       - prometheus-data:/prometheus
@@ -46,8 +58,35 @@ services:
       timeout: 5s
       retries: 10
 
+  # E-mails the alerts of Prometheus (monitoring/prometheus/rules) through the
+  # SMTP account of Jenkins to ALERT_EMAIL. Without SMTP_HOST or ALERT_EMAIL
+  # it only lists them on http://localhost:9093. Test: make test-alert
+  alertmanager:
+    <<: [*restart, *logging]
+    image: quay.io/prometheus/alertmanager:${ALERTMANAGER_VERSION:-v0.35.0}
+    entrypoint: ["/bin/sh", "/etc/alertmanager/run.sh"]
+    environment:
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-alertmanager@localhost}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+    secrets:
+      - smtp_username
+      - smtp_password
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      # Silences and what was already sent survive a restart
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:9093/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   grafana:
-    <<: *restart
+    <<: [*restart, *logging]
     image: grafana/grafana:${GRAFANA_VERSION:-11.3.0}
     # setup.sh needs the running API. It is not a service of its own because
     # `up --wait` fails on a one-shot container nothing depends on.
@@ -95,7 +134,7 @@ services:
   # Metrics of the machine. On Docker Desktop (macOS, Windows) the machine is
   # Docker's Linux VM, not the laptop. No ports, only Prometheus reads it.
   node-exporter:
-    <<: *restart
+    <<: [*restart, *logging]
     profiles: [host-metrics]
     image: quay.io/prometheus/node-exporter:${NODE_EXPORTER_VERSION:-v1.12.1}
     command:
@@ -108,7 +147,7 @@ services:
   # the Docker and containerd sockets, which Docker Desktop maps to its VM; a
   # mount of the whole /var/run would be the laptop's directory on macOS.
   cadvisor:
-    <<: *restart
+    <<: [*restart, *logging]
     profiles: [host-metrics]
     image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION:-v0.55.1}
     command:
@@ -132,7 +171,7 @@ services:
 
   # Database of the indexer. No ports: 5432 is open from outside on the FIIT firewall.
   postgres:
-    <<: *restart
+    <<: [*restart, *logging]
     image: postgres:${POSTGRES_VERSION:-16}
     environment:
       POSTGRES_USER: pouw
@@ -151,6 +190,7 @@ services:
   # Read-only user `grafana` in the indexer database (ADR-0008). Runs on every
   # start, creates or updates the user and its password, then exits.
   grafana-db-user:
+    <<: *logging
     image: postgres:${POSTGRES_VERSION:-16}
     entrypoint:
       - /bin/sh
@@ -167,13 +207,42 @@ services:
       postgres:
         condition: service_healthy
 
+  # Nightly dump of the indexer database into BACKUP_DIR on the host, outside
+  # the Docker volumes, kept for 7 days (scripts/backup.sh). Now: make backup.
+  # Restore: scripts/restore.sh, a trial one: make restore-test
+  backup:
+    <<: [*restart, *logging]
+    image: postgres:${POSTGRES_VERSION:-16}
+    entrypoint: ["bash", "/backup.sh"]
+    # bash is not PID 1, so `docker stop` ends its sleep at once
+    init: true
+    environment:
+      BACKUP_AT: ${BACKUP_AT:-02:00}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-7}
+    secrets:
+      - postgres_password
+    volumes:
+      - ./scripts/backup.sh:/backup.sh:ro
+      # A path; `make up` creates it with mode 700
+      - ${BACKUP_DIR:-./backups}:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Healthy with a dump younger than 26 hours; the first one is made at start
+    healthcheck:
+      test: ["CMD-SHELL", "find /backups -maxdepth 1 -name 'pouw-*.dump' -mmin -1560 | grep -q ."]
+      interval: 10s
+      timeout: 5s
+      start_period: 2m
+      retries: 30
+
   # GraphQL API of the explorer over the indexer database. The image comes from
   # pouw-dashboard/hasura and applies its metadata on start; with metadata that
   # does not match the schema it does not start. The metadata tracks the views
   # in the schema api, which the indexer creates (its migrations), so Hasura
   # starts after the indexer.
   hasura:
-    <<: *restart
+    <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-dashboard-hasura:${DASHBOARD_HASURA_VERSION:-main}
     # Hasura reads the admin secret and the database URL only from the
     # environment, so they are loaded from /run/secrets just before the start
@@ -220,7 +289,7 @@ services:
   # Variables: pouw-node/README.md. The store stays in memory (POUW_STORE)
   # until the RocksDB backend exists (pouw-node#69); /data holds the node key.
   node-1:
-    <<: *restart
+    <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
     environment:
       POUW_NODE_ID: node-1
@@ -235,13 +304,14 @@ services:
   # Read-only workload API stub for local development until pouw-light-node
   # serves the contracted read routes. Set LIGHT_NODE_URL to this service.
   light-node-mock:
+    <<: *logging
     profiles: [mock]
     image: wiremock/wiremock:${WIREMOCK_VERSION:-3.13.2}
     volumes:
       - ./light-node-mock/mappings:/home/wiremock/mappings:ro
 
   indexer:
-    <<: *restart
+    <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-indexer:${INDEXER_VERSION:-main}
     # The indexer reads the database only from DATABASE_URL, so the URL is put
     # together from /run/secrets just before the start, as for Hasura. It runs
@@ -269,7 +339,7 @@ services:
     healthcheck: *health
 
   workload:
-    <<: *restart
+    <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
     # node-1 serves fixtures until the real light node is available.
     environment:
@@ -280,6 +350,7 @@ services:
     healthcheck: *health
 
   workload-soak:
+    <<: *logging
     profiles: [soak]
     image: curlimages/curl:8.12.1
     restart: "no"
@@ -293,7 +364,7 @@ services:
   # Explorer UI, nginx on port 8080 (pouw-dashboard/web). On staging the proxy
   # serves it on EXPLORER_HOST together with /v1/graphql of Hasura.
   dashboard:
-    <<: *restart
+    <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-dashboard:${DASHBOARD_VERSION:-main}
     ports:
       - "127.0.0.1:${DASHBOARD_PORT:-8082}:8080"
@@ -307,7 +378,7 @@ services:
       retries: 10
 
   jenkins:
-    <<: *restart
+    <<: [*restart, *logging]
     profiles: [jenkins]
     build: ./jenkins
     image: pouw-jenkins:local
@@ -349,7 +420,7 @@ services:
   # Docker commands from jobs go to jenkins-docker, not to the server's Docker,
   # so a job cannot reach the secrets or the network's containers.
   jenkins-agent:
-    <<: *restart
+    <<: [*restart, *logging]
     profiles: [jenkins]
     build:
       context: ./jenkins
@@ -371,7 +442,7 @@ services:
         condition: service_healthy
 
   jenkins-docker:
-    <<: *restart
+    <<: [*restart, *logging]
     profiles: [jenkins]
     image: docker:dind
     privileged: true
@@ -392,7 +463,7 @@ services:
       retries: 10
 
   proxy:
-    <<: *restart
+    <<: [*restart, *logging]
     profiles: [proxy]
     image: caddy:2
     environment:
@@ -444,6 +515,7 @@ secrets:
 
 volumes:
   prometheus-data:
+  alertmanager-data:
   grafana-data:
   postgres-data:
   node-1-data:

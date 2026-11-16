@@ -1,0 +1,65 @@
+# Alerts of the network. Prometheus evaluates them every 15 s and sends the
+# firing ones to Alertmanager, which e-mails them (monitoring/alertmanager).
+# Tests: monitoring/prometheus/tests/ (make check). The thresholds assume the
+# devnet: a block about every 10 s (target_block_secs of the chain spec).
+groups:
+  - name: pouw
+    rules:
+      - alert: NodeDown
+        expr: up{job="pouw-node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.instance }} is down"
+          description: "Prometheus has not reached the node for 2 minutes."
+
+      # Without a node, the explorer and the workload have nothing to read
+      - alert: ServiceDown
+        expr: up{job=~"pouw-indexer|pouw-workload"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is down"
+          description: "Prometheus has not reached {{ $labels.instance }} for 2 minutes."
+
+      # The height of no node changed for 10 minutes, about 60 missing blocks
+      - alert: ChainStalled
+        expr: max(changes(pouw_node_height[10m])) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No new block for 10 minutes"
+          description: "The height of every node has stayed the same for 10 minutes."
+
+      - alert: IndexerLagging
+        expr: pouw_indexer_lag_blocks > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The indexer is {{ $value }} blocks behind the node"
+          description: "For 5 minutes the explorer has been more than 10 blocks behind the chain."
+
+      # node-exporter (profile host-metrics)
+      - alert: DiskAlmostFull
+        expr: 1 - node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|ramfs"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full"
+          description: "More than 80 % of the disk has been used for 10 minutes."
+
+      # cAdvisor (profile host-metrics). A container that restarts gets a new
+      # cgroup and its CPU counter starts from zero again, so each reset is a
+      # restart. A container recreated by a deploy is a new series, no reset.
+      - alert: ContainerRestarting
+        expr: resets(container_cpu_usage_seconds_total{name!=""}[15m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.name }} restarts over and over"
+          description: "The container restarted {{ $value }} times in 15 minutes."

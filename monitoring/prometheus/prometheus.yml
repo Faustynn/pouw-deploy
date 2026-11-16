@@ -1,5 +1,16 @@
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alerting rules (tests in tests/, make check). Firing alerts go to
+# Alertmanager, which e-mails them.
+rule_files:
+  - rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
 
 # Every target is listed even when its service does not run (a profile is off or
 # the service does not serve /metrics yet). Such a target is `down` on the

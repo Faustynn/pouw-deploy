@@ -57,11 +57,54 @@ check() {
     fi
 }
 
+# check_host <description> <function>: a check of Docker itself, on this machine
+check_host() {
+    local out name
+    name="$(printf '%s' "$1" | xml)"
+    tests=$((tests + 1))
+    if out="$("$2" 2>&1)"; then
+        echo "ok    $1"
+        cases+="  <testcase classname=\"smoke.docker\" name=\"$name\"/>"$'\n'
+    else
+        echo "FAIL  $1"
+        printf '%s\n' "$out" | sed 's/^/      /'
+        failed=$((failed + 1))
+        cases+="  <testcase classname=\"smoke.docker\" name=\"$name\"><failure message=\"command failed\">$(printf '%s' "$out" | xml)</failure></testcase>"$'\n'
+    fi
+}
+
+# Docker keeps at most 3 log files of 10 MB of every container (x-logging in compose.yml)
+logs_capped() {
+    local id name size bad=0
+    for id in $(docker ps -q --filter "label=com.docker.compose.project=$project"); do
+        read -r name size <<<"$(docker inspect -f '{{.Name}} {{index .HostConfig.LogConfig.Config "max-size"}}' "$id")"
+        if [[ -z "$size" ]]; then
+            echo "no log limit: ${name#/}"
+            bad=1
+        fi
+    done
+    return "$bad"
+}
+
 check "prometheus is ready" prometheus \
     'wget -qO- http://localhost:9090/-/ready'
 
 check "prometheus scrapes its own metrics" prometheus \
     'wget -qO- "http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22prometheus%22%7D" | grep -q "\"1\"\]"'
+
+# Alerts (monitoring/prometheus/rules), e-mailed by Alertmanager
+check "alertmanager is ready" alertmanager \
+    'wget -qO /dev/null http://localhost:9093/-/ready'
+
+check "prometheus has the alert rules" prometheus \
+    "wget -qO- http://localhost:9090/api/v1/rules | grep -q '\"name\":\"ChainStalled\"'"
+
+check "prometheus sends alerts to alertmanager" prometheus \
+    "wget -qO- http://localhost:9090/api/v1/alertmanagers | grep -q 'alertmanager:9093'"
+
+# The first dump is made right after the start, then every night
+check "a dump of the database younger than 26 hours exists" backup \
+    "find /backups -maxdepth 1 -name 'pouw-*.dump' -mmin -1560 | grep -q ."
 
 check "grafana and its database" grafana \
     'wget -qO- http://localhost:3000/api/health | grep -q "\"database\": *\"ok\""'
@@ -155,6 +198,8 @@ check "dashboard serves the explorer" dashboard \
 # to Hasura, elsewhere the nginx of the explorer does
 check "the explorer reaches hasura" dashboard \
     "wget -qO- --header 'Content-Type: application/json' --post-data '{\"query\": \"{ blocks(limit: 1) { height } }\"}' http://localhost:8080/v1/graphql | grep -q '\"data\"'"
+
+check_host "every container caps its logs" logs_capped
 
 if [[ -n "${JUNIT_XML:-}" ]]; then
     mkdir -p "$(dirname "$JUNIT_XML")"
