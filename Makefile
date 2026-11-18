@@ -126,9 +126,13 @@ test-alert: ## Send a test alert; with SMTP_HOST and ALERT_EMAIL it arrives by e
 		--annotation=summary="Test alert from make test-alert" --alertmanager.url=http://localhost:9093
 
 # A dump and a trial restore of it run every time, so a backup that cannot be
-# restored fails the nightly build
+# restored fails the nightly build. Without IMAGE_TAG the test copy runs :main
+# from GHCR, pulled first, so not an old image that happens to be cached.
 test: ## Smoke and e2e tests in a separate copy of the network (results in reports/)
 	SECRETS_SOURCE=local SECRETS_DIR=.secrets ./scripts/secrets.sh
+ifndef IMAGE_TAG
+	$(TEST) pull -q --ignore-buildable
+endif
 	$(TEST) up -d --wait --wait-timeout 300
 	JUNIT_XML=reports/smoke.xml ./e2e/smoke.sh $(TEST_PROJECT)
 	$(TEST) exec -T backup bash /backup.sh once
