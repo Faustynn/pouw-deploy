@@ -419,7 +419,7 @@ services:
       hasura:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -128,19 +128,25 @@ check "grafana reads the indexer database" grafana \
 check "the grafana database user is read-only" postgres \
     "psql -U pouw -d pouw -tAc \"SELECT rolsuper OR rolcreatedb OR rolcreaterole OR NOT ('default_transaction_read_only=on' = ANY(coalesce(rolconfig, '{}'))) OR EXISTS (SELECT FROM information_schema.role_table_grants WHERE grantee = 'grafana' AND privilege_type <> 'SELECT') FROM pg_roles WHERE rolname = 'grafana'\" | grep -qx f"
 
+# Hasura runs only the operations of the contract (web-api.graphql, the
+# allow-list of pouw-dashboard) for anonymous clients, so the checks send
+# LatestBlocks exactly as the contract has it
+LATEST_BLOCKS='{"query": "query LatestBlocks($limit: Int = 10) { blocks(where: {canonical: {_eq: true}}, order_by: {height: desc}, limit: $limit) { ...BlockRow } } fragment BlockRow on blocks { hash height time miner transfer_count registration_count proof_count fee_total }", "variables": {"limit": 1}}'
+MUTATION='{"query": "mutation { delete_blocks(where: {}) { affected_rows } }"}'
+
 # strict: 500 when the metadata does not match the schema of the indexer
 check "hasura is up and its metadata is consistent" hasura \
     'curl -fsS "http://localhost:8080/healthz?strict=true"'
 
 check "hasura serves the api views without a token" hasura \
-    "curl -fsS http://localhost:8080/v1/graphql -d '{\"query\": \"{ blocks(limit: 1) { height } }\"}' | grep -q '\"data\"'"
+    "curl -fsS http://localhost:8080/v1/graphql -d '$LATEST_BLOCKS' | grep -q '\"data\"'"
 
 check "hasura has no console" hasura \
     "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/console | grep -qx 404"
 
-# Without a token the schema has no mutations at all, so nothing can be written
+# Without a token a mutation is rejected and nothing is written
 check "anonymous clients cannot write through hasura" hasura \
-    "curl -fsS http://localhost:8080/v1/graphql -d '{\"query\": \"{ __schema { mutationType { name } } }\"}' | grep -q '\"mutationType\":null'"
+    "r=\$(curl -sS http://localhost:8080/v1/graphql -d '$MUTATION'); echo \"\$r\" | grep -q '\"errors\"' && ! echo \"\$r\" | grep -q '\"data\"'"
 
 # Anonymous visitors of Grafana (the panels embedded in the explorer)
 check "grafana shows the public dashboard without a login" grafana \
@@ -194,12 +200,12 @@ check "workload is healthy" workload \
     'curl -fsS http://localhost:8000/health | grep -q UP'
 
 check "dashboard serves the explorer" dashboard \
-    'wget -qO /dev/null http://localhost:8080/'
+    'wget -qO /dev/null http://127.0.0.1:8080/'
 
 # The explorer asks /v1/graphql on its own host: on staging the proxy sends it
 # to Hasura, elsewhere the nginx of the explorer does
 check "the explorer reaches hasura" dashboard \
-    "wget -qO- --header 'Content-Type: application/json' --post-data '{\"query\": \"{ blocks(limit: 1) { height } }\"}' http://localhost:8080/v1/graphql | grep -q '\"data\"'"
+    "wget -qO- --header 'Content-Type: application/json' --post-data '$LATEST_BLOCKS' http://127.0.0.1:8080/v1/graphql | grep -q '\"data\"'"
 
 check_host "every container caps its logs" logs_capped
 

@@ -23,7 +23,8 @@ MAX_LAG = 5
 
 
 def get(url):
-    r = requests.get(url, timeout=10)
+    # the node answers in Borsh unless asked for JSON
+    r = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
     r.raise_for_status()
     return r.json()
 
@@ -33,8 +34,21 @@ def node(name):
     return get(f"http://{name}:8000/v1/node")
 
 
-def graphql(query, url=HASURA):
-    r = requests.post(url, json={"query": query}, timeout=10)
+# Hasura runs only the operations of the contract (web-api.graphql, the
+# allow-list of pouw-dashboard) for anonymous clients, so the tests send
+# LatestBlocks exactly as the contract has it
+BLOCK_ROW = (
+    "fragment BlockRow on blocks { hash height time miner transfer_count"
+    " registration_count proof_count fee_total }"
+)
+LATEST_BLOCKS = (
+    "{kind} LatestBlocks($limit: Int = 10) { blocks(where: {canonical: {_eq: true}},"
+    " order_by: {height: desc}, limit: $limit) { ...BlockRow } } " + BLOCK_ROW
+)
+
+
+def graphql(query, variables=None, url=HASURA):
+    r = requests.post(url, json={"query": query, "variables": variables or {}}, timeout=10)
     r.raise_for_status()
     body = r.json()
     assert "errors" not in body, body
@@ -43,10 +57,7 @@ def graphql(query, url=HASURA):
 
 def newest_block():
     """Newest canonical block in Hasura as {height, hash}, None without blocks."""
-    rows = graphql(
-        "{ blocks(where: {canonical: {_eq: true}}, order_by: {height: desc}, limit: 1)"
-        " { height hash } }"
-    )["blocks"]
+    rows = graphql(LATEST_BLOCKS.replace("{kind}", "query"), {"limit": 1})["blocks"]
     return rows[0] if rows else None
 
 
@@ -143,19 +154,27 @@ def test_hasura_serves_the_newest_block_of_the_node():
 
 def test_subscription_gets_a_new_block():
     """The live view of the explorer: a GraphQL subscription over WebSocket."""
-    query = "subscription { blocks(order_by: {height: desc}, limit: 1) { height } }"
+    query = LATEST_BLOCKS.replace("{kind}", "subscription")
     seen = []
 
     async def run():
         async with websockets.connect(
             "ws://hasura:8080/v1/graphql", subprotocols=["graphql-transport-ws"]
         ) as ws:
+            async def recv():
+                # Hasura sends keepalive pings, also before connection_ack
+                while True:
+                    msg = json.loads(await ws.recv())
+                    if msg["type"] != "ping":
+                        return msg
+                    await ws.send(json.dumps({"type": "pong"}))
+
             await ws.send(json.dumps({"type": "connection_init", "payload": {}}))
-            ack = json.loads(await asyncio.wait_for(ws.recv(), 10))
+            ack = await asyncio.wait_for(recv(), 10)
             assert ack["type"] == "connection_ack", ack
-            await ws.send(json.dumps({"id": "1", "type": "subscribe", "payload": {"query": query}}))
+            await ws.send(json.dumps({"id": "1", "type": "subscribe", "payload": {"query": query, "variables": {"limit": 1}}}))
             while True:
-                msg = json.loads(await ws.recv())
+                msg = await recv()
                 assert msg["type"] not in ("error", "complete"), msg
                 if msg["type"] == "next":
                     rows = msg["payload"]["data"]["blocks"]
@@ -176,4 +195,5 @@ def test_explorer_responds():
     r = requests.get("http://dashboard:8080/", timeout=10)
     assert r.status_code == 200 and "<html" in r.text.lower(), r.text[:200]
     # The explorer asks /v1/graphql on its own host, as a browser does
-    assert "blocks" in graphql("{ blocks(limit: 1) { height } }", url="http://dashboard:8080/v1/graphql")
+    query = LATEST_BLOCKS.replace("{kind}", "query")
+    assert "blocks" in graphql(query, {"limit": 1}, url="http://dashboard:8080/v1/graphql")
