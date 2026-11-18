@@ -116,7 +116,7 @@ check "postgres accepts connections" postgres \
     'pg_isready -U pouw -d pouw'
 
 # Dashboards as code (monitoring/grafana/dashboards), loaded at start without clicking
-for uid in pouw-network pouw-services pouw-server; do
+for uid in pouw-network pouw-services pouw-server pouw-workload; do
     check "grafana has the dashboard $uid" grafana \
         "wget -qO- \"http://admin:\$(cat /run/secrets/grafana_admin_password)@localhost:3000/api/dashboards/uid/$uid\" | grep -q '\"uid\":\"$uid\"'"
 done
