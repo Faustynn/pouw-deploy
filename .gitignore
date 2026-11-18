@@ -10,6 +10,7 @@ versions.env.prev
 data/
 build/
 reports/
+backups/
 
 .DS_Store
 .idea/

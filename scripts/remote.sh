@@ -8,7 +8,9 @@
 #   deploy <sha> [NODE_VERSION=sha-xxxxxxx ...]
 #                  deploys a commit that is in origin/main (an older one = rollback)
 #                  with the given service versions (without them :main from GHCR).
-#                  If the new version does not start, the previous one is restored.
+#                  If the new version does not start or fails the smoke tests
+#                  (Hasura metadata, nothing to write for anonymous clients, ...),
+#                  the previous one is restored.
 #   restart        restarts the services with the current version
 #   status         container status and the deployed version
 set -euo pipefail
@@ -47,7 +49,9 @@ deploy() {
     git checkout -q --detach "$sha"
     # The Makefile loads versions.env, so the versions also apply to `make restart`
     printf '%s\n' "$@" >versions.env
-    if ! make up; then
+    # The Hasura image applies its metadata on start and does not start with
+    # metadata that does not match the schema, so `make up` covers that too
+    if ! { make up && ./e2e/smoke.sh pouw; }; then
         echo "Deploy failed, restoring the previous version $prev" >&2
         git checkout -q --detach "$prev"
         mv -f versions.env.prev versions.env

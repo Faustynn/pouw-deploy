@@ -30,9 +30,9 @@ if [[ -n "${SRC:-}" ]]; then
     src_root="$(cd "$root" && cd "$SRC" && pwd)"
 fi
 
-# repository      directory with Dockerfile  image             required file                 compose service
+# repository      directory with Dockerfile  image             required file                 compose services (comma-separated)
 images=(
-    "pouw-node      .       pouw-node              Dockerfile                    node-1"
+    "pouw-node      .       pouw-node              Dockerfile                    genesis,node-1,node-2,node-3"
     "pouw-indexer   .       pouw-indexer           Dockerfile                    indexer"
     "pouw-workload  .       pouw-workload          Dockerfile                    workload"
     "pouw-dashboard web     pouw-dashboard         web/package.json              dashboard"
@@ -72,14 +72,14 @@ off() {
     done
 }
 
-# skip <image> <service> <reason>: use :main from GHCR, or do not start the service
+# skip <image> <services> <reason>: use :main from GHCR, or do not start the services
 skip() {
     if docker pull -q "ghcr.io/pouw-zk/$1:main" >/dev/null 2>&1; then
         docker tag "ghcr.io/pouw-zk/$1:main" "ghcr.io/pouw-zk/$1:$tag"
         echo "$1 ($3, using :main from GHCR)" | tee -a "$build/versions.txt"
     else
         echo "$1 ($3, not in GHCR either)" | tee -a "$build/versions.txt"
-        off "$2" "no image"
+        for s in ${2//,/ }; do off "$s" "no image"; done
     fi
 }
 

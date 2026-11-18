@@ -1,0 +1,148 @@
+# Tests of the alerting rules in ../rules, run by make check:
+#   promtool test rules monitoring/prometheus/tests/pouw.test.yml
+# Each alert gets a case where it must stay quiet and one where it must fire.
+rule_files:
+  - ../rules/pouw.yml
+
+evaluation_interval: 15s
+
+tests:
+  # NodeDown: down for less than 2 minutes is only pending
+  - interval: 15s
+    input_series:
+      # up for 2 minutes, then down
+      - series: 'up{job="pouw-node", instance="node-1"}'
+        values: "1x8 0x20"
+      - series: 'up{job="pouw-node", instance="node-2"}'
+        values: "1x28"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: NodeDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: NodeDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: pouw-node
+              instance: node-1
+            exp_annotations:
+              summary: "Node node-1 is down"
+              description: "Prometheus has not reached the node for 2 minutes."
+
+  # ServiceDown: the indexer and the workload
+  - interval: 15s
+    input_series:
+      - series: 'up{job="pouw-workload", instance="workload:8001"}'
+        values: "0x20"
+      - series: 'up{job="pouw-indexer", instance="indexer:8000"}'
+        values: "1x20"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ServiceDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: pouw-workload
+              instance: workload:8001
+            exp_annotations:
+              summary: "pouw-workload is down"
+              description: "Prometheus has not reached workload:8001 for 2 minutes."
+
+  # ChainStalled: blocks for 10 minutes, then none. A node that never got a
+  # block (no sync yet) neither hides the stall nor raises it alone.
+  - interval: 15s
+    input_series:
+      - series: 'pouw_node_height{job="pouw-node", instance="node-1"}'
+        values: "0+1x40 40x60"
+      - series: 'pouw_node_height{job="pouw-node", instance="node-2"}'
+        values: "0x100"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ChainStalled
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: ChainStalled
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "No new block for 10 minutes"
+              description: "The height of every node has stayed the same for 10 minutes."
+
+  # IndexerLagging: 2 blocks behind is normal, 30 for 5 minutes is not
+  - interval: 15s
+    input_series:
+      - series: 'pouw_indexer_lag_blocks{job="pouw-indexer", instance="indexer:8000"}'
+        values: "2x20 30x40"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: IndexerLagging
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: IndexerLagging
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: pouw-indexer
+              instance: indexer:8000
+            exp_annotations:
+              summary: "The indexer is 30 blocks behind the node"
+              description: "For 5 minutes the explorer has been more than 10 blocks behind the chain."
+
+  # DiskAlmostFull: / at 90 % for 10 minutes; a full tmpfs is memory, no alert
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node-exporter", instance="node-exporter:9100", device="/dev/sda1", fstype="ext4", mountpoint="/"}'
+        values: "50x5 10x20"
+      - series: 'node_filesystem_size_bytes{job="node-exporter", instance="node-exporter:9100", device="/dev/sda1", fstype="ext4", mountpoint="/"}'
+        values: "100x25"
+      - series: 'node_filesystem_avail_bytes{job="node-exporter", instance="node-exporter:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: "1x25"
+      - series: 'node_filesystem_size_bytes{job="node-exporter", instance="node-exporter:9100", device="tmpfs", fstype="tmpfs", mountpoint="/run"}'
+        values: "100x25"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: DiskAlmostFull
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: DiskAlmostFull
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node-exporter
+              instance: node-exporter:9100
+              device: /dev/sda1
+              fstype: ext4
+              mountpoint: /
+            exp_annotations:
+              summary: "Disk / is 90% full"
+              description: "More than 80 % of the disk has been used for 10 minutes."
+
+  # ContainerRestarting: three restarts (the CPU counter starts from zero
+  # again each time) fire at once; a container that keeps running does not
+  - interval: 15s
+    input_series:
+      - series: 'container_cpu_usage_seconds_total{cpu="total", id="/system.slice/docker-a.scope", image="ghcr.io/pouw-zk/pouw-indexer:main", name="pouw-indexer-1"}'
+        values: "0 5 10 1 5 1 5 1 5"
+      - series: 'container_cpu_usage_seconds_total{cpu="total", id="/system.slice/docker-b.scope", image="postgres:16", name="pouw-postgres-1"}'
+        values: "0+5x8"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: ContainerRestarting
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: ContainerRestarting
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              cpu: total
+              id: /system.slice/docker-a.scope
+              image: ghcr.io/pouw-zk/pouw-indexer:main
+              name: pouw-indexer-1
+            exp_annotations:
+              summary: "pouw-indexer-1 restarts over and over"
+              description: "The container restarted 3 times in 15 minutes."
