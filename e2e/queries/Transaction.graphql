@@ -1,0 +1,43 @@
+# Copy of the operation Transaction of pouw-docs contracts/web-api.graphql: Hasura
+# runs only the operations of the contract for anonymous clients (allow-list).
+query Transaction($txid: String!) {
+  transfers(where: {txid: {_eq: $txid}}, order_by: {canonical: desc}) {
+    ...TransferRow
+  }
+  circuits(where: {txid: {_eq: $txid}}) {
+    ...RegistrationRow
+    registered_block
+    registered_height
+    registered_time
+    canonical
+  }
+  proofs(where: {request_txid: {_eq: $txid}}, order_by: {canonical: desc}) {
+    proof_hash
+    height
+    canonical
+  }
+}
+
+fragment TransferRow on transfers {
+  txid
+  block_hash
+  height
+  time
+  position
+  canonical
+  sender
+  recipient
+  amount
+  fee
+  nonce
+  sort_key
+}
+
+fragment RegistrationRow on circuits {
+  txid
+  circuit_id
+  proof_system
+  constraint_count
+  registrant
+  fee
+}

@@ -8,6 +8,8 @@ generous; a test that fails says what it saw last.
 
 import asyncio
 import json
+import os
+import pathlib
 import time
 
 import pytest
@@ -16,8 +18,11 @@ import websockets
 
 NODES = ["node-1", "node-2", "node-3"]
 HASURA = "http://hasura:8080/v1/graphql"
-# Waiting for one or two blocks; a slow CPU may need several times 10 s
-BLOCKS_WAIT = 180
+# Waiting for one or two blocks. The target is 10 s, but on a busy machine
+# (Docker Desktop with the whole network) a block takes about 50 s on average
+# and single gaps of 4 minutes happen, so a short limit makes the tests flaky.
+# Passing tests return as soon as the block is there.
+BLOCKS_WAIT = 600
 # How far the indexer may be behind node-1
 MAX_LAG = 5
 
@@ -197,3 +202,37 @@ def test_explorer_responds():
     # The explorer asks /v1/graphql on its own host, as a browser does
     query = LATEST_BLOCKS.replace("{kind}", "query")
     assert "blocks" in graphql(query, {"limit": 1}, url="http://dashboard:8080/v1/graphql")
+
+
+TRANSACTION = (pathlib.Path(__file__).parent / "queries" / "Transaction.graphql").read_text()
+
+
+@pytest.mark.skipif(not os.environ.get("E2E_TRANSFER"), reason="run.sh signs the transfer (E2E_TRANSFER)")
+def test_transfer_reaches_the_explorer():
+    """A real transfer, signed with the test key of the contracts by run.sh, goes
+    through node-1, a block, the indexer and Hasura to the explorer."""
+    to = os.environ["E2E_TRANSFER_TO"]
+    amount = int(os.environ["E2E_TRANSFER_AMOUNT"])
+    r = requests.post(
+        "http://node-1:8000/v1/txs",
+        data=os.environ["E2E_TRANSFER"],
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        timeout=10,
+    )
+    assert r.status_code == 202, r.text
+    txid = r.json()["txid"]
+
+    def included():
+        status = get(f"http://node-1:8000/v1/txs/{txid}")["status"]
+        return status == "included", status
+
+    wait_for(f"{txid} in a block of node-1", included)
+    assert get(f"http://node-1:8000/v1/accounts/{to}")["balance"] == amount
+
+    def in_explorer():
+        rows = graphql(TRANSACTION, {"txid": txid}, url="http://dashboard:8080/v1/graphql")["transfers"]
+        return bool(rows) and rows[0]["canonical"], rows
+
+    wait_for(f"{txid} in the explorer", in_explorer)
+    row = graphql(TRANSACTION, {"txid": txid})["transfers"][0]
+    assert (row["recipient"], row["amount"]) == (to, amount), row

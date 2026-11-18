@@ -374,6 +374,8 @@ services:
     environment:
       # It follows the chain of node-1, the miner
       NODE_URL: http://node-1:8000
+      # and the event log (GET /v1/events) of every node of the devnet
+      EVENT_SOURCES: node-1=http://node-1:8000,node-2=http://node-2:8000,node-3=http://node-3:8000
     secrets:
       - postgres_password
     ports:
@@ -391,6 +393,9 @@ services:
     # Reads from node-1 until the light node is in the devnet (pouw-node#105)
     environment:
       LIGHT_NODE_URL: ${LIGHT_NODE_URL:-http://node-1:8000}
+    volumes:
+      # reads of the real devnet: POST /api/v1/start {"scenario_name": "devnet"}
+      - ./devnet/workload.yaml:/opt/pouw-workload/scenarios/devnet.yaml:ro
     depends_on:
       node-1:
         condition: service_healthy
