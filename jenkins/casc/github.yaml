@@ -47,3 +47,4 @@ unclassified:
 
 jobs:
   - file: /var/jenkins_casc/jobs/github.groovy
+  - file: /var/jenkins_casc/jobs/load-test.groovy

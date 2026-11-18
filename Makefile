@@ -53,7 +53,7 @@ DASHBOARD_HASURA_VERSION := $(IMAGE_TAG)
 endif
 
 .PHONY: help secrets up down restart seed ps logs check images test test-down dev dev-test \
-	backup restore-test test-alert
+	backup restore-test test-alert load test-load
 
 help: ## List of commands
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{ printf "  make %-12s %s\n", $$1, $$2 }'
@@ -150,3 +150,18 @@ endif
 
 test-down: ## Remove the test copy of the network
 	$(TEST) down -v --remove-orphans
+
+# Load tests with pouw-workload, report in reports/load (scripts/load-test.sh).
+# Scenarios: devnet (reads of the real devnet), smoke and soak of pouw-workload.
+SCENARIO ?= devnet
+
+load: ## Load test on the running network (staging), watch it in Grafana: PoUW · Load test; SCENARIO=devnet
+	./scripts/load-test.sh pouw $(SCENARIO)
+
+test-load: ## Load test in a separate copy of the network, like the Jenkins job pouw-load-test; SCENARIO=devnet
+	SECRETS_SOURCE=local SECRETS_DIR=.secrets ./scripts/secrets.sh
+ifndef IMAGE_TAG
+	$(TEST) pull -q --ignore-buildable
+endif
+	$(TEST) up -d --wait --wait-timeout 300
+	GRAFANA_URL= ./scripts/load-test.sh $(TEST_PROJECT) $(SCENARIO)
