@@ -221,8 +221,13 @@ services:
       - grafana_db_password
     volumes:
       - ./monitoring/postgres/grafana-reader.sql:/grafana-reader.sql:ro
+    # After the indexer is healthy, i.e. after its migrations: GRANT ON ALL
+    # TABLES at the same time as CREATE TABLE of a migration can deadlock in
+    # pg_class ("deadlock detected", exit 3 of this service)
     depends_on:
       postgres:
+        condition: service_healthy
+      indexer:
         condition: service_healthy
 
   # Nightly dump of the indexer database into BACKUP_DIR on the host, outside
