@@ -1,8 +1,8 @@
 """e2e tests of the whole devnet: 3 nodes, the indexer, Hasura and the explorer.
 
 They run in a fresh test copy of the network (make test, every PR of
-pouw-deploy and every night in Jenkins): a new genesis, node-1 mines from the
-start, node-2 and node-3 dial it. A block takes about 10 s, so the waits are
+pouw-deploy and every night in Jenkins): a new genesis, all three nodes mine
+from the start, node-2 and node-3 dial node-1. A block takes about 10 s, so the waits are
 generous; a test that fails says what it saw last.
 """
 
@@ -17,6 +17,12 @@ import requests
 import websockets
 
 NODES = ["node-1", "node-2", "node-3"]
+# Reward addresses of the miners (compose.yml, test keys of the contracts)
+MINERS = {
+    "node-1": "addr:8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+    "node-2": "addr:43a72e714401762df66b68c26dfbdf2682aaec9f2474eca4613e424a0fbafd3c",
+    "node-3": "addr:66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a",
+}
 HASURA = "http://hasura:8080/v1/graphql"
 # Waiting for one or two blocks. The target is 10 s, but on a busy machine
 # (Docker Desktop with the whole network) a block takes about 50 s on average
@@ -124,6 +130,31 @@ def test_nodes_have_the_same_tip():
         return len(set(tips.values())) == 1, heights()
 
     wait_for("all nodes on the same tip", same_tip, timeout=60)
+
+
+def test_more_than_one_miner_finds_blocks():
+    """All three nodes mine. Each has a third of the hash power, so within a few
+    blocks at least two miners have one; the chain of node-1 and the explorer
+    (Hasura) both show them, and only the miners of the devnet."""
+
+    def miners_at_node():
+        tip = node("node-1")["height"]
+        found = {
+            get(f"http://node-1:8000/v1/blocks/{h}")["header"]["miner"]
+            for h in range(max(1, tip - 49), tip + 1)
+        }
+        return len(found) >= 2, {"height": tip, "miners": sorted(found)}
+
+    seen = wait_for("blocks of two miners in the chain of node-1", miners_at_node)
+    assert set(seen["miners"]) <= set(MINERS.values()), seen
+
+    def miners_in_explorer():
+        rows = graphql(LATEST_BLOCKS.replace("{kind}", "query"), {"limit": 50})["blocks"]
+        found = {r["miner"] for r in rows}
+        return len(found) >= 2, sorted(found)
+
+    found = wait_for("blocks of two miners in the explorer", miners_in_explorer)
+    assert set(found) <= set(MINERS.values()), found
 
 
 def test_indexer_keeps_up_with_the_node():

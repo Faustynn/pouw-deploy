@@ -319,8 +319,11 @@ services:
       - ./devnet:/template:ro
       - devnet:/devnet
 
-  # Until the nodes sync blocks (pouw-node#86, #90) only node-1 grows, node-2
-  # and node-3 stay at genesis
+  # Three miners on one chain, like Bitcoin: every node mines, gossip
+  # (pouw-node#130) and the initial sync (pouw-node#128) keep them on the same
+  # tip. The rewards go to test keys of the contracts
+  # (pouw-docs contracts/fixtures/chain.json), so they can be spent with
+  # `pouw transfer --seed`. node-1 is the bootnode.
   node-1:
     <<: *node
     environment:
@@ -339,6 +342,8 @@ services:
       <<: *node-env
       POUW_NODE_ID: node-2
       POUW_BOOTNODES: ${NODE_BOOTNODES:-/dns4/node-1/tcp/30333}
+      # Reward: miner-a of the contract fixtures (seed 32 × 0x0a)
+      POUW_MINER_ADDRESS: ${NODE_2_MINER_ADDRESS:-addr:43a72e714401762df66b68c26dfbdf2682aaec9f2474eca4613e424a0fbafd3c}
     volumes:
       - devnet:/devnet:ro
       - node-2-data:/data
@@ -349,6 +354,8 @@ services:
       <<: *node-env
       POUW_NODE_ID: node-3
       POUW_BOOTNODES: ${NODE_BOOTNODES:-/dns4/node-1/tcp/30333}
+      # Reward: miner-b of the contract fixtures (seed 32 × 0x0b)
+      POUW_MINER_ADDRESS: ${NODE_3_MINER_ADDRESS:-addr:66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a}
     volumes:
       - devnet:/devnet:ro
       - node-3-data:/data
@@ -377,7 +384,7 @@ services:
       - pouw-indexer
     command: [serve]
     environment:
-      # It follows the chain of node-1, the miner
+      # It follows the chain of node-1, the bootnode
       NODE_URL: http://node-1:8000
       # and the event log (GET /v1/events) of every node of the devnet
       EVENT_SOURCES: node-1=http://node-1:8000,node-2=http://node-2:8000,node-3=http://node-3:8000

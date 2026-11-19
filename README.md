@@ -69,14 +69,18 @@ Three nodes of pouw-node on one chain:
   `genesis.timestamp`. The target schedule counts from that time, so a chain
   started days after its genesis would mine a burst of easy blocks. Every test
   copy gets a genesis of its own, staging keeps its one in the volume.
-- **Nodes.** Each has its own volume (RocksDB and the node key). node-1 is the
-  bootnode and the only miner, the reward goes to the test key of the
-  contracts (`NODE_MINER_ADDRESS`). node-2 and node-3 dial it
-  (`NODE_BOOTNODES`) and find each other through it. The indexer and the
-  workload read node-1, Prometheus scrapes all three.
-- **Sync.** Until the nodes exchange blocks (pouw-node#86, #90) node-2 and
-  node-3 stay at genesis. Their test `test_nodes_have_the_same_tip` is an
-  expected failure (`xfail`) until then; once it passes, delete the mark.
+- **Nodes.** Each has its own volume (RocksDB and the node key). All three
+  mine, like the miners of Bitcoin, and compete for every block. The rewards
+  go to test keys of the contracts: node-1 to the key with seed 32 × `0x01`
+  (`NODE_MINER_ADDRESS`, it also holds the genesis allocation), node-2 to
+  `miner-a` (32 × `0x0a`), node-3 to `miner-b` (32 × `0x0b`),
+  see `contracts/fixtures/chain.json` in pouw-docs. node-1 is the bootnode:
+  node-2 and node-3 dial it (`NODE_BOOTNODES`) and find each other through
+  it. The indexer and the workload read node-1, Prometheus scrapes all three.
+- **Sync.** Gossip (pouw-node#130) carries new blocks to the other nodes, the
+  initial sync (pouw-node#128) brings a node that was down up to the tip.
+  When two miners find a block at the same height, the chain with more work
+  wins and the other block is orphaned (a reorg); the indexer follows it.
 
 A new chain (new genesis, empty nodes and indexer database):
 `./scripts/devnet-reset.sh`, it asks first. Needed after a change of
@@ -152,7 +156,7 @@ make down           # stop everything, data is kept for the next start
 | the whole network from GHCR `:main`, without building | `make up` |
 | logs of one service | `make logs SERVICE=indexer`, only the last hour: `SINCE=1h` |
 | what is built from where | `build/versions.txt` |
-| blocks in the explorer | nothing, node-1 mines one about every 10 s from the start |
+| blocks in the explorer | nothing, the three nodes mine one about every 10 s from the start |
 | a new chain (new genesis, empty nodes and indexer) | `./scripts/devnet-reset.sh` |
 | start from an empty database | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |
 | work on one service alone (fast loop) | that repository's README, section Run locally |
@@ -176,7 +180,7 @@ now). Then delete its `profiles: [network]` line in `compose.yml`, from then on
 | Integration | one service with a real dependency (database, files) | the service repository, CI starts the dependency | GitHub Actions `ci-ok` on every PR | merge of the PR |
 | Image | the `Dockerfile` builds, the container starts and is healthy | `ci-ok` step "Docker image starts" | every PR of the service | merge of the PR |
 | Smoke | the deployed network is up: each service runs, talks to its database, Prometheus sees it | `e2e/smoke.sh` here | Jenkins (PR of pouw-deploy, every evening), `make test`, `make dev-test` | staging deploy |
-| E2E of the devnet | the whole chain: the nodes share genesis and find each other, node-1 mines, the indexer keeps up, Hasura serves the newest block, a subscription gets new blocks, the explorer answers | `e2e/test_devnet.py` here | Jenkins with the smoke tests, `make test` | staging deploy |
+| E2E of the devnet | the whole chain: the nodes share genesis and find each other, the chain grows, the nodes keep the same tip, more than one miner finds blocks, the indexer keeps up, Hasura serves the newest block, a subscription gets new blocks, the explorer answers | `e2e/test_devnet.py` here | Jenkins with the smoke tests, `make test` | staging deploy |
 | E2E | behaviour across services through their APIs (submit a task → node mines → indexer → GraphQL) | `e2e/test_*.py` in the service repository | Jenkins with the smoke tests | staging deploy |
 
 ### Unit and integration tests (GitHub Actions, `ci-ok`)
