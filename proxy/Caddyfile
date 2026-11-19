@@ -12,5 +12,26 @@
 
 {$GRAFANA_HOST} {
 	encode gzip
+	# Only the explorer may put Grafana into an iframe. allow_embedding drops
+	# X-Frame-Options from every page, the login page too.
+	header Content-Security-Policy "frame-ancestors 'self' https://{$EXPLORER_HOST}"
 	reverse_proxy grafana:3000
+}
+
+# The explorer and its API on one host, so the browser needs no CORS. Only
+# /v1/graphql of Hasura goes out (reverse_proxy passes the WebSocket of
+# subscriptions by itself); /console, /v1/metadata and /v2/query stay inside.
+{$EXPLORER_HOST} {
+	encode gzip
+	handle /v1/graphql {
+		reverse_proxy hasura:8080
+	}
+	# nginx of the explorer passes all of /v1/ to Hasura (pouw-dashboard/web/nginx.conf),
+	# so the rest of it is closed here: /v1/metadata, /v1/query, /v1/version, ...
+	handle /v1/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy dashboard:8080
+	}
 }

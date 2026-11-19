@@ -1,0 +1,24 @@
+# Reads of the real devnet for pouw-workload (mounted as scenarios/devnet.yaml).
+# Heights are capped by the head the workload sees. The address is the miner
+# of node-1 (NODE_MINER_ADDRESS), the only account with a balance. The devnet
+# has no transactions and no proof tasks yet, so those reads are off.
+name: devnet
+duration_seconds: 60
+rate_per_second: 20
+arrival_model: poisson
+burst_period_seconds: 20
+max_concurrency: 64
+min_height: 1
+max_height: 1000000
+addresses:
+  - addr:8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+transaction_ids: []
+proof_task_ids: []
+operation_mix:
+  chain_head: 1
+  block_header: 1
+  block: 1
+  balance: 1
+  nonce: 1
+  transaction_status: 0
+  proof_task_status: 0

@@ -11,6 +11,7 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 - [Everyday development](#everyday-development)
 - [Tests: what goes where and who runs it](#tests-what-goes-where-and-who-runs-it)
 - [Monitoring](#monitoring)
+- [Backups and logs](#backups-and-logs)
 - [Commands](#commands)
 - [Staging](#staging)
 - [Troubleshooting](#troubleshooting)
@@ -22,11 +23,13 @@ monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
 | Postgres | - | `docker compose exec postgres psql -U pouw` | always |
 | Hasura (GraphQL of the explorer) | pouw-dashboard/hasura | <http://localhost:8081/v1/graphql> | always (starts after the indexer) |
 | Prometheus | - | <http://localhost:9090> | always |
+| Alertmanager (alerts by e-mail) | - | <http://localhost:9093> | always |
 | Grafana | - | <http://localhost:3000> | always |
-| node-1 | pouw-node | inside the network only | always |
+| backup (nightly dump of the database) | - | `BACKUP_DIR`, default `./backups` | always |
+| node-1, node-2, node-3 (the devnet, see below) | pouw-node | inside the network only | always |
 | indexer | pouw-indexer | <http://localhost:8083> | always |
 | workload | pouw-workload | inside the network only | always |
-| dashboard (explorer) | pouw-dashboard/web | <http://localhost:8082> | `network` (no image yet) |
+| dashboard (explorer) | pouw-dashboard/web | <http://localhost:8082> | always |
 | node-exporter, cAdvisor | - | Prometheus → Targets | `host-metrics` |
 | Jenkins | - | <http://localhost:8080> | `jenkins` |
 | Caddy (HTTPS) | - | server only | `proxy` |
@@ -55,6 +58,33 @@ secret `.secrets/hasura_admin_secret` (queries without it get the read-only
 role `anonymous`, like the explorer), Jenkins `admin` /
 `.secrets/jenkins_admin_password`. The files are created by the first
 `make up`, random for every laptop.
+
+### The devnet
+
+Three nodes of pouw-node on one chain:
+
+- **Genesis.** The service `genesis` writes the chain spec once, when the volume
+  `devnet` is empty: `devnet/chainspec.json` (a copy of
+  `pouw-node/chainspec/devnet.json`) with the current time as
+  `genesis.timestamp`. The target schedule counts from that time, so a chain
+  started days after its genesis would mine a burst of easy blocks. Every test
+  copy gets a genesis of its own, staging keeps its one in the volume.
+- **Nodes.** Each has its own volume (RocksDB and the node key). node-1 is the
+  bootnode and the only miner, the reward goes to the test key of the
+  contracts (`NODE_MINER_ADDRESS`). node-2 and node-3 dial it
+  (`NODE_BOOTNODES`) and find each other through it. The indexer and the
+  workload read node-1, Prometheus scrapes all three.
+- **Sync.** Until the nodes exchange blocks (pouw-node#86, #90) node-2 and
+  node-3 stay at genesis. Their test `test_nodes_have_the_same_tip` is an
+  expected failure (`xfail`) until then; once it passes, delete the mark.
+
+A new chain (new genesis, empty nodes and indexer database):
+`./scripts/devnet-reset.sh`, it asks first. Needed after a change of
+`devnet/chainspec.json` (keep it equal to
+`../pouw-node/chainspec/devnet.json`), because a node refuses its database
+under another genesis and the indexer stops syncing a chain that shares no
+block with its database. On staging run it once after such a deploy.
+`make seed` mixes fixture blocks into the database, never use it with the devnet.
 
 ## First use
 
@@ -100,7 +130,6 @@ changes or another branch checked out.
 cd pouw-deploy
 cp .env.example .env
 make dev            # builds every service from ../pouw-*, starts the whole network
-make seed           # fixture blocks into the indexer database
 make ps             # everything Up (healthy)
 ```
 
@@ -121,23 +150,23 @@ make down           # stop everything, data is kept for the next start
 | see my change of a service in the whole network | `make dev` (from whatever branch each `../pouw-*` is on, uncommitted changes too) |
 | test my change against the other services | `make dev-test`, results in `reports/`, then `make test-down` |
 | the whole network from GHCR `:main`, without building | `make up` |
-| logs of one service | `make logs s=indexer` |
+| logs of one service | `make logs SERVICE=indexer`, only the last hour: `SINCE=1h` |
 | what is built from where | `build/versions.txt` |
-| fixture data for the explorer | `make seed` |
+| blocks in the explorer | nothing, node-1 mines one about every 10 s from the start |
+| a new chain (new genesis, empty nodes and indexer) | `./scripts/devnet-reset.sh` |
 | start from an empty database | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |
 | work on one service alone (fast loop) | that repository's README, section Run locally |
 | try a change of Jenkins | `COMPOSE_PROFILES=jenkins` and `JENKINS_LOCAL_BRANCH=<pushed branch>` in `.env`, `make up`, <http://localhost:8080> |
 
 `make dev` = `make images up SRC=..`. An image that cannot be built from your
-working copy (no `Dockerfile` yet, e.g. the dashboard before `web/` has a
-project) is taken from GHCR `:main`; when there is none, the service is not
-started and `build/versions.txt` says why.
+working copy (no `Dockerfile` yet) is taken from GHCR `:main`; when there is
+none, the service is not started and `build/versions.txt` says why.
 
 Without `SRC` (`make up`, Jenkins, staging) the services come from GHCR,
 published from `main` by `docker.yml` of each repository. A new service stays
-in the `network` profile until its image is published (now only the
-dashboard). Then delete its `profiles: [network]` line in `compose.yml`, from
-then on `make up`, the nightly test and staging run it.
+in the `network` profile until its image is published (none is there right
+now). Then delete its `profiles: [network]` line in `compose.yml`, from then on
+`make up`, the nightly test and staging run it.
 
 ## Tests: what goes where and who runs it
 
@@ -147,6 +176,7 @@ then on `make up`, the nightly test and staging run it.
 | Integration | one service with a real dependency (database, files) | the service repository, CI starts the dependency | GitHub Actions `ci-ok` on every PR | merge of the PR |
 | Image | the `Dockerfile` builds, the container starts and is healthy | `ci-ok` step "Docker image starts" | every PR of the service | merge of the PR |
 | Smoke | the deployed network is up: each service runs, talks to its database, Prometheus sees it | `e2e/smoke.sh` here | Jenkins (PR of pouw-deploy, every evening), `make test`, `make dev-test` | staging deploy |
+| E2E of the devnet | the whole chain: the nodes share genesis and find each other, node-1 mines, the indexer keeps up, Hasura serves the newest block, a subscription gets new blocks, the explorer answers | `e2e/test_devnet.py` here | Jenkins with the smoke tests, `make test` | staging deploy |
 | E2E | behaviour across services through their APIs (submit a task → node mines → indexer → GraphQL) | `e2e/test_*.py` in the service repository | Jenkins with the smoke tests | staging deploy |
 
 ### Unit and integration tests (GitHub Actions, `ci-ok`)
@@ -186,6 +216,13 @@ check "indexer is healthy (database reachable)" indexer \
 - Smoke tests only ask "is it up and wired together". Behaviour belongs to e2e.
 
 Run them against your running network with `./e2e/smoke.sh pouw`.
+
+### E2E tests of the devnet (`e2e/test_devnet.py` in this repository)
+
+pytest, run by `e2e/run.sh` like the e2e tests of the services, results in
+`reports/devnet.xml` (suite `devnet` in Jenkins). They wait for real blocks
+(about 10 s each) with generous timeouts, and a test that fails says what it
+saw last. Against your running network: `./e2e/run.sh pouw`.
 
 ### E2E tests (`e2e/` in each service repository)
 
@@ -235,7 +272,7 @@ service, also for one that does not run: such a target is `down`, not an error.
 
 | Job | Target | Status |
 | --- | --- | --- |
-| `pouw-node` | `node-1:9100/metrics` | down until pouw-node#63 |
+| `pouw-node` | `node-1:9100`, `node-2:9100`, `node-3:9100` (`/metrics`), label `instance="node-1"` ... | the devnet |
 | `pouw-indexer` | `indexer:8000/metrics` | down until the indexer serves `/metrics` |
 | `pouw-workload` | `workload:8001/metrics` | down until the workload serves `/metrics` |
 | `node-exporter` | the machine (CPU, memory, disk) | profile `host-metrics` |
@@ -257,7 +294,7 @@ folder **PoUW** when Grafana starts, no clicking.
 | PoUW · Server | CPU, RAM, disks, disk I/O, network, load | node-exporter |
 
 The stats of the last 100 blocks do not depend on the time range, so the
-fixture blocks of `make seed` are visible right away. Panels of metrics that
+blocks of the devnet are visible right away. Panels of metrics that
 a service does not serve yet stay empty until it does.
 
 The datasource **Indexer (Postgres)** reads the indexer tables as the user
@@ -272,23 +309,101 @@ To change a dashboard: edit it in Grafana, then Share → Export → Save to fil
 `prometheus` and `indexer`, and run `make up` to check it loads. A dashboard
 saved only in the UI is lost when the Grafana volume is recreated.
 
+### Panels embedded in the explorer
+
+Visitors without a login are Viewers of a separate organization, **Public**. It
+has only the dashboards in `monitoring/grafana/public-org/dashboards/` and only
+Prometheus. The team dashboards and the database stay in the main organization
+behind the password.
+
+Keep it that way: a Viewer can send any query to every datasource of its
+organization, not only the queries of the panels. So never add the Postgres
+datasource to Public, and remember that anyone can read all metrics in
+Prometheus. Datasource permissions exist only in Grafana Enterprise.
+
+`monitoring/grafana/public-org/setup.sh` creates the organization through the
+API on every start of Grafana, and the container is healthy only after it
+succeeds. To add a panel, change the JSON there and run `make up`. To embed it:
+
+```html
+<iframe src="https://grafana.147-175-151-18.sslip.io/d-solo/pouw-public/x?orgId=2&panelId=1"></iframe>
+```
+
+Through the proxy only the explorer (`EXPLORER_HOST`) may embed Grafana.
+
+### Alerts
+
+Prometheus evaluates the rules in `monitoring/prometheus/rules/` and sends the
+firing alerts to Alertmanager, which e-mails them to `ALERT_EMAIL` through the
+SMTP account of Jenkins (`SMTP_*` in `.env`, username and password in `pass`).
+Without `SMTP_HOST` or `ALERT_EMAIL` (a laptop, the test copies) the alerts are
+only listed on <http://localhost:9093>.
+
+| Alert | Fires when |
+| --- | --- |
+| `NodeDown` | Prometheus has not reached a node for 2 minutes |
+| `ServiceDown` | the same for the indexer or the workload |
+| `ChainStalled` | the height of no node changed for 10 minutes |
+| `IndexerLagging` | the indexer is more than 10 blocks behind the node for 5 minutes |
+| `DiskAlmostFull` | a disk of the server is more than 80 % full for 10 minutes |
+| `ContainerRestarting` | a container restarted more than twice in 15 minutes |
+
+One e-mail per alert name 30 s after it starts, a reminder every 12 hours while
+it lasts and one when it is resolved. `make test-alert` sends a test alert
+through the same path. `make check` runs the tests of the rules in
+`monitoring/prometheus/tests/`: a new rule gets a case where it fires and one
+where it stays quiet. Prometheus reloads the rules on every `make up`.
+
+Silence an alert during planned work:
+
+```bash
+docker compose exec alertmanager amtool silence add alertname=NodeDown \
+  --duration=2h --comment="node upgrade" --alertmanager.url=http://localhost:9093
+```
+
+## Backups and logs
+
+The service `backup` dumps the indexer database every night at `BACKUP_AT`
+(UTC, default 02:00) into `BACKUP_DIR` on the host, outside the Docker volumes,
+and deletes dumps older than 7 days. It makes one right away when the newest
+is older than 20 hours, e.g. after the first start. A dump that fails ends the
+container, Docker restarts it over and over and `ContainerRestarting` fires.
+
+```bash
+make backup                       # a dump now
+make restore-test                 # trial restore of the newest dump into a separate database
+./scripts/restore.sh --replace pouw-20261116T020000Z.dump   # replace the live database
+```
+
+`make test` (and so the nightly build) makes a dump of the test copy and
+restores it every time. After a real restore the indexer continues from the
+last block in the dump and fetches the newer ones from the node; without any
+dump it can rebuild the database from the node too, only slower.
+
+Docker keeps at most 3 log files of 10 MB per container (`x-logging` in
+`compose.yml`), so logs never fill the disk. Read them with
+`make logs SERVICE=indexer`, `SINCE=1h` for the last hour.
+
 ## Commands
 
 ```text
-make help       List of commands
-make dev        Build the services from ../pouw-* and start the whole network locally
-make dev-test   Build the services from ../pouw-* and test them in a separate copy
-make secrets    Prepare secrets (random locally, from pass on the server)
-make up         Start services according to COMPOSE_PROFILES
-make down       Stop services of all profiles (data is kept)
-make restart    Restart services, e.g. after a password change in pass
-make seed       Load the fixture blocks of pouw-indexer into the running network
-make ps         Service status
-make logs       Logs, e.g. make logs s=jenkins
-make check      Validate compose for all profiles and the Prometheus config
-make images     Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
-make test       Smoke and e2e tests in a separate copy of the network (results in reports/)
-make test-down  Remove the test copy of the network
+make help         List of commands
+make dev          Build the services from ../pouw-* and start the whole network locally
+make dev-test     Build the services from ../pouw-* and test them in a separate copy
+make secrets      Prepare secrets (random locally, from pass on the server)
+make up           Start services according to COMPOSE_PROFILES
+make down         Stop services of all profiles (data is kept)
+make restart      Restart services, e.g. after a password change in pass
+make seed         Fixture blocks of pouw-indexer into the database; never with the devnet, its sync stops
+make ps           Service status
+make logs         Logs of a service, e.g. make logs SERVICE=indexer [SINCE=1h] (without SERVICE all)
+make check        Validate compose, Prometheus with tests of its alerts, Alertmanager and the Caddyfile
+make images       Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
+make backup       Dump the database into BACKUP_DIR now (the service backup does it every night)
+make restore-test Trial restore of the newest dump into a separate database (DUMP=<file> another)
+make test-alert   Send a test alert; with SMTP_HOST and ALERT_EMAIL it arrives by e-mail
+make test         Smoke and e2e tests in a separate copy of the network (results in reports/)
+make test-down    Remove the test copy of the network
 ```
 
 ## Staging
@@ -297,10 +412,12 @@ make test-down  Remove the test copy of the network
 | --- | --- |
 | Jenkins | <https://jenkins.147-175-151-18.sslip.io> (GitHub login) |
 | Grafana | <https://grafana.147-175-151-18.sslip.io> |
+| Explorer | <https://explorer.147-175-151-18.sslip.io> (GraphQL on `/v1/graphql`, the rest of Hasura is not reachable from outside) |
 
 Changes reach the server only through `main`: every evening Jenkins builds
 `main` of all services, runs the smoke and e2e tests and, if they pass, the
-Deploy workflow deploys exactly those versions. Manual deploy, rollback,
+Deploy workflow deploys exactly those versions. After `make up` the deploy runs
+the smoke tests; if they fail, the previous version is restored. Manual deploy, rollback,
 restart and status: GitHub → Actions → Deploy. Server setup, passwords and
 operations are in [pouw-docs → Server](https://pouw-zk.github.io/pouw-docs/server/).
 
@@ -319,5 +436,5 @@ Passwords never go into git or `.env`. Jenkins is configured only through
 | Windows: everything is very slow | the clone is under `/mnt/c`, clone it into the WSL home |
 | `unknown tag !override` / `!reset` | Docker Compose older than 2.24.4, update Docker |
 | Grafana shows no dashboards after a `git checkout` / rebase | the running container still mounts the old directory: `make restart` |
-| a service is `unhealthy` | `make logs s=<service>`; `make dev` again after the fix |
+| a service is `unhealthy` | `make logs SERVICE=<service>`; `make dev` again after the fix |
 | something is wrong after an update | `docker compose down -v --remove-orphans` (deletes local data), `make dev` |

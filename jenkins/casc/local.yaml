@@ -28,3 +28,4 @@ jobs:
               }
           }
       }
+  - file: /var/jenkins_casc/jobs/load-test.groovy

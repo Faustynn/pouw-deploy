@@ -1,6 +1,8 @@
 services:
   prometheus:
     ports: !reset []
+  alertmanager:
+    ports: !reset []
   grafana:
     ports: !reset []
   hasura:
@@ -9,3 +11,13 @@ services:
     ports: !reset []
   dashboard:
     ports: !reset []
+  # The test copy keeps its dumps in a volume that make test-down removes:
+  # files the container writes into the workspace would belong to root, and
+  # Jenkins could not delete them
+  backup:
+    volumes: !override
+      - ./scripts/backup.sh:/backup.sh:ro
+      - backups:/backups
+
+volumes:
+  backups:

@@ -1,8 +1,11 @@
-// Whole-network test: services are built from main of their repositories,
-// started in a test copy of the network and run through the tests in e2e/.
-// Runs on push and PR, every evening on main (from scratch, without Docker
-// cache) and manually via "Build Now". Individual test results are in Tests
-// on the build page, service commits in the build description.
+// Whole-network test: services are built from main of their repositories and
+// started in a test copy of the network, the devnet with 3 nodes and a genesis
+// of its own. Then the smoke tests (e2e/smoke.sh), a backup with a trial
+// restore, the e2e tests of the devnet (e2e/test_devnet.py) and the e2e tests
+// of every service. Runs on push and PR, every evening on main (from scratch,
+// without Docker cache) and manually via "Build Now". Individual test results
+// are in Tests on the build page (suites smoke, devnet, pouw-*), service
+// commits in the build description.
 //
 // After successful tests, the evening build of main deploys the same versions
 // to staging. If tests or the deploy fail, staging stays on the previous
@@ -57,7 +60,7 @@ pipeline {
                 }
             }
         }
-        stage('Network tests') {
+        stage('Devnet tests') {
             steps {
                 sh 'make test'
             }
