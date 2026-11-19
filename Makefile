@@ -19,6 +19,18 @@ SKIP_FILE = $(if $(IMAGE_TAG),$(shell [ -f build/skip.yml ] && echo -f build/ski
 COMPOSE = docker compose -f compose.yml $(SKIP_FILE)
 comma := ,
 
+# The server is the place with the profile proxy. There the explorer lives next
+# to Grafana (grafana.<domain> -> explorer.<domain>) unless .env says otherwise,
+# and node-exporter and cAdvisor always run, so the panels of the server and of
+# the containers have data. Without it a new variable in compose would need a
+# manual edit of .env on the server first.
+ifneq ($(filter proxy,$(subst $(comma), ,$(COMPOSE_PROFILES))),)
+EXPLORER_HOST ?= $(patsubst grafana.%,explorer.%,$(GRAFANA_HOST))
+ifeq ($(filter host-metrics,$(subst $(comma), ,$(COMPOSE_PROFILES))),)
+override COMPOSE_PROFILES := $(COMPOSE_PROFILES),host-metrics
+endif
+endif
+
 # SRC=.. builds the services from your working copies next to pouw-deploy
 # (../pouw-node, ...) instead of main from GitHub, tags them :local and runs
 # them with the `network` profile. `make dev` and `make dev-test` set it.
