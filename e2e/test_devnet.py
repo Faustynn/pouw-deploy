@@ -114,11 +114,9 @@ def test_height_grows():
     wait_for("node-1 mines two blocks", grew)
 
 
-@pytest.mark.xfail(
-    reason="the nodes do not exchange blocks yet (pouw-node#86 gossip, #90 initial sync)",
-    strict=False,
-)
 def test_nodes_have_the_same_tip():
+    # gossip (pouw-node#130) and the initial sync (pouw-node#128) keep the
+    # chains of the 3 nodes together
     wait_for("node-1 has a block", node_1_has_a_block)
 
     def same_tip():
