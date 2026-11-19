@@ -150,7 +150,8 @@ def test_more_than_one_miner_finds_blocks():
 
     def miners_in_explorer():
         rows = graphql(LATEST_BLOCKS.replace("{kind}", "query"), {"limit": 50})["blocks"]
-        found = {r["miner"] for r in rows}
+        # genesis has no miner (addr:000…0), the newest 50 include it early on
+        found = {r["miner"] for r in rows if r["height"] >= 1}
         return len(found) >= 2, sorted(found)
 
     found = wait_for("blocks of two miners in the explorer", miners_in_explorer)
