@@ -78,7 +78,10 @@ services:
 
   # E-mails the alerts of Prometheus (monitoring/prometheus/rules) through the
   # SMTP account of Jenkins to ALERT_EMAIL. Without SMTP_HOST or ALERT_EMAIL
-  # it only lists them on http://localhost:9093. Test: make test-alert
+  # it only lists them on http://localhost:9093. Test: make test-alert. On the
+  # server the UI is https://ALERTMANAGER_HOST behind the proxy with a login
+  # (ALERTMANAGER_USER, password pouw/alertmanager/password in pass), and the
+  # links in the e-mails point there (ALERTMANAGER_URL).
   alertmanager:
     <<: [*restart, *logging]
     image: quay.io/prometheus/alertmanager:${ALERTMANAGER_VERSION:-v0.35.0}
@@ -88,6 +91,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_FROM: ${SMTP_FROM:-alertmanager@localhost}
       ALERT_EMAIL: ${ALERT_EMAIL:-}
+      ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
     secrets:
       - smtp_username
       - smtp_password
@@ -552,13 +556,20 @@ services:
     <<: [*restart, *logging]
     profiles: [proxy]
     image: caddy:2
+    # run.sh hashes the password of the Alertmanager login, then starts Caddy
+    entrypoint: ["/bin/sh", "/etc/caddy/run.sh"]
     environment:
       ACME_EMAIL: ${ACME_EMAIL:-admin@localhost}
       JENKINS_HOST: ${JENKINS_HOST:-jenkins.localhost}
       GRAFANA_HOST: ${GRAFANA_HOST:-grafana.localhost}
       EXPLORER_HOST: ${EXPLORER_HOST:-explorer.localhost}
+      ALERTMANAGER_HOST: ${ALERTMANAGER_HOST:-alerts.localhost}
+      ALERTMANAGER_USER: ${ALERTMANAGER_USER:-admin}
+    secrets:
+      - alertmanager_password
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./proxy/run.sh:/etc/caddy/run.sh:ro
       - caddy-data:/data
       - caddy-config:/config
     ports:
@@ -570,6 +581,8 @@ networks:
   jenkins:
 
 secrets:
+  alertmanager_password:
+    file: ${SECRETS_DIR:-./.secrets}/alertmanager_password
   grafana_admin_password:
     file: ${SECRETS_DIR:-./.secrets}/grafana_admin_password
   postgres_password:
