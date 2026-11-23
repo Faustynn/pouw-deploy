@@ -43,6 +43,18 @@ groups:
           summary: "The indexer is {{ $value }} blocks behind the node"
           description: "For 5 minutes the explorer has been more than 10 blocks behind the chain."
 
+      # Every node writes an event for each block it accepts, so a cursor that stands
+      # still means the indexer gets no events of that node. pouw-node#142: after a
+      # node restart the indexer stored no event for days, without any error.
+      - alert: IndexerEventsStalled
+        expr: changes(pouw_indexer_event_cursor[15m]) == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The indexer gets no events of {{ $labels.node_id }}"
+          description: "For 20 minutes the indexer has stored no event of {{ $labels.node_id }}. If the node runs (no NodeDown), compare its event seq (GET /v1/events) with pouw_indexer_event_cursor."
+
       # node-exporter (profile host-metrics)
       - alert: DiskAlmostFull
         expr: 1 - node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|ramfs"} > 0.8
