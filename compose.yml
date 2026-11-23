@@ -78,7 +78,10 @@ services:
 
   # E-mails the alerts of Prometheus (monitoring/prometheus/rules) through the
   # SMTP account of Jenkins to ALERT_EMAIL. Without SMTP_HOST or ALERT_EMAIL
-  # it only lists them on http://localhost:9093. Test: make test-alert
+  # it only lists them on http://localhost:9093. Test: make test-alert. On the
+  # server the UI is https://ALERTMANAGER_HOST behind the proxy with a login
+  # (ALERTMANAGER_USER, password pouw/alertmanager/password in pass), and the
+  # links in the e-mails point there (ALERTMANAGER_URL).
   alertmanager:
     <<: [*restart, *logging]
     image: quay.io/prometheus/alertmanager:${ALERTMANAGER_VERSION:-v0.35.0}
@@ -88,6 +91,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_FROM: ${SMTP_FROM:-alertmanager@localhost}
       ALERT_EMAIL: ${ALERT_EMAIL:-}
+      ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
     secrets:
       - smtp_username
       - smtp_password
@@ -319,8 +323,11 @@ services:
       - ./devnet:/template:ro
       - devnet:/devnet
 
-  # Until the nodes sync blocks (pouw-node#86, #90) only node-1 grows, node-2
-  # and node-3 stay at genesis
+  # Three miners on one chain, like Bitcoin: every node mines, gossip
+  # (pouw-node#130) and the initial sync (pouw-node#128) keep them on the same
+  # tip. The rewards go to test keys of the contracts
+  # (pouw-docs contracts/fixtures/chain.json), so they can be spent with
+  # `pouw transfer --seed`. node-1 is the bootnode.
   node-1:
     <<: *node
     environment:
@@ -339,6 +346,8 @@ services:
       <<: *node-env
       POUW_NODE_ID: node-2
       POUW_BOOTNODES: ${NODE_BOOTNODES:-/dns4/node-1/tcp/30333}
+      # Reward: miner-a of the contract fixtures (seed 32 × 0x0a)
+      POUW_MINER_ADDRESS: ${NODE_2_MINER_ADDRESS:-addr:43a72e714401762df66b68c26dfbdf2682aaec9f2474eca4613e424a0fbafd3c}
     volumes:
       - devnet:/devnet:ro
       - node-2-data:/data
@@ -349,12 +358,36 @@ services:
       <<: *node-env
       POUW_NODE_ID: node-3
       POUW_BOOTNODES: ${NODE_BOOTNODES:-/dns4/node-1/tcp/30333}
+      # Reward: miner-b of the contract fixtures (seed 32 × 0x0b)
+      POUW_MINER_ADDRESS: ${NODE_3_MINER_ADDRESS:-addr:66be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a}
     volumes:
       - devnet:/devnet:ro
       - node-3-data:/data
 
-  # Read-only workload API stub for local development until pouw-light-node
-  # serves the contracted read routes. Set LIGHT_NODE_URL to this service.
+  light-node:
+    <<: [*restart, *logging]
+    image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
+    entrypoint: ["pouw-light-node"]
+    environment:
+      # The node image defines POUW_DATA_DIR for pouw-node. The light binary
+      # rejects variables it does not own, so remove the inherited value.
+      POUW_DATA_DIR:
+      POUW_CHAIN_SPEC: /devnet/chainspec.json
+      POUW_LIGHT_DATA_DIR: /data
+      POUW_FULL_NODES: http://node-1:8000,http://node-2:8000,http://node-3:8000
+    volumes:
+      - devnet:/devnet:ro
+      - light-node-data:/data
+    depends_on:
+      node-1:
+        condition: service_healthy
+      node-2:
+        condition: service_healthy
+      node-3:
+        condition: service_healthy
+    healthcheck: *health
+
+  # Read-only workload API stub for local development.
   light-node-mock:
     <<: *logging
     profiles: [mock]
@@ -377,7 +410,7 @@ services:
       - pouw-indexer
     command: [serve]
     environment:
-      # It follows the chain of node-1, the miner
+      # It follows the chain of node-1, the bootnode
       NODE_URL: http://node-1:8000
       # and the event log (GET /v1/events) of every node of the devnet
       EVENT_SOURCES: node-1=http://node-1:8000,node-2=http://node-2:8000,node-3=http://node-3:8000
@@ -395,14 +428,14 @@ services:
   workload:
     <<: [*restart, *logging]
     image: ghcr.io/pouw-zk/pouw-workload:${WORKLOAD_VERSION:-main}
-    # Reads from node-1 until the light node is in the devnet (pouw-node#105)
     environment:
-      LIGHT_NODE_URL: ${LIGHT_NODE_URL:-http://node-1:8000}
+      LIGHT_NODE_URL: ${LIGHT_NODE_URL:-http://light-node:8000}
+      FULL_NODE_URLS: ${FULL_NODE_URLS:-http://node-1:8000,http://node-2:8000,http://node-3:8000}
     volumes:
       # reads of the real devnet: POST /api/v1/start {"scenario_name": "devnet"}
       - ./devnet/workload.yaml:/opt/pouw-workload/scenarios/devnet.yaml:ro
     depends_on:
-      node-1:
+      light-node:
         condition: service_healthy
     healthcheck: *health
 
@@ -523,13 +556,20 @@ services:
     <<: [*restart, *logging]
     profiles: [proxy]
     image: caddy:2
+    # run.sh hashes the password of the Alertmanager login, then starts Caddy
+    entrypoint: ["/bin/sh", "/etc/caddy/run.sh"]
     environment:
       ACME_EMAIL: ${ACME_EMAIL:-admin@localhost}
       JENKINS_HOST: ${JENKINS_HOST:-jenkins.localhost}
       GRAFANA_HOST: ${GRAFANA_HOST:-grafana.localhost}
       EXPLORER_HOST: ${EXPLORER_HOST:-explorer.localhost}
+      ALERTMANAGER_HOST: ${ALERTMANAGER_HOST:-alerts.localhost}
+      ALERTMANAGER_USER: ${ALERTMANAGER_USER:-admin}
+    secrets:
+      - alertmanager_password
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./proxy/run.sh:/etc/caddy/run.sh:ro
       - caddy-data:/data
       - caddy-config:/config
     ports:
@@ -541,6 +581,8 @@ networks:
   jenkins:
 
 secrets:
+  alertmanager_password:
+    file: ${SECRETS_DIR:-./.secrets}/alertmanager_password
   grafana_admin_password:
     file: ${SECRETS_DIR:-./.secrets}/grafana_admin_password
   postgres_password:
@@ -577,6 +619,7 @@ volumes:
   postgres-data:
   # The devnet: its chain spec and the database of each node
   devnet:
+  light-node-data:
   node-1-data:
   node-2-data:
   node-3-data:

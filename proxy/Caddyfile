@@ -35,3 +35,14 @@
 		reverse_proxy dashboard:8080
 	}
 }
+
+# Alertmanager (alerts, silences) behind a login: user ALERTMANAGER_USER,
+# password pouw/alertmanager/password in pass. run.sh puts its bcrypt hash into
+# ALERTMANAGER_HASH, so neither the password nor its hash is in git.
+{$ALERTMANAGER_HOST} {
+	encode gzip
+	basic_auth {
+		{$ALERTMANAGER_USER} {$ALERTMANAGER_HASH}
+	}
+	reverse_proxy alertmanager:9093
+}

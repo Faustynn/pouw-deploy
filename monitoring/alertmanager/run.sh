@@ -54,7 +54,7 @@ EOF
 if [ "${1:-}" = check ]; then
     exec amtool check-config "$config"
 fi
-# The UI is reachable only through 127.0.0.1 (an SSH tunnel on the server),
-# links in the e-mails point there
+# Links in the e-mails point to ALERTMANAGER_URL: on the server the proxy with
+# a login (proxy/Caddyfile), elsewhere 127.0.0.1
 exec /bin/alertmanager --config.file="$config" --storage.path=/alertmanager \
-    --web.external-url=http://localhost:9093
+    --web.external-url="${ALERTMANAGER_URL:-http://localhost:9093}"
