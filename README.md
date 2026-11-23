@@ -192,7 +192,8 @@ now). Then delete its `profiles: [network]` line in `compose.yml`, from then on
 | Integration | one service with a real dependency (database, files) | the service repository, CI starts the dependency | GitHub Actions `ci-ok` on every PR | merge of the PR |
 | Image | the `Dockerfile` builds, the container starts and is healthy | `ci-ok` step "Docker image starts" | every PR of the service | merge of the PR |
 | Smoke | the deployed network is up: each service runs, talks to its database, Prometheus sees it | `e2e/smoke.sh` here | Jenkins (PR of pouw-deploy, every evening), `make test`, `make dev-test` | staging deploy |
-| E2E of the devnet | the whole chain: the nodes share genesis and find each other, the chain grows, the nodes keep the same tip, more than one miner finds blocks, the indexer keeps up, Hasura serves the newest block, a subscription gets new blocks, the explorer answers | `e2e/test_devnet.py` here | Jenkins with the smoke tests, `make test` | staging deploy |
+| E2E of the devnet | the whole chain: the nodes share genesis and find each other, the chain grows, the nodes keep the same tip, more than one miner finds blocks, the indexer keeps up and gets the events of every node, Hasura serves the newest block, a subscription gets new blocks, the explorer answers | `e2e/test_devnet.py` here | Jenkins with the smoke tests, `make test` | staging deploy |
+| E2E after a node restart | `e2e/run.sh` restarts node-3 of the test copy: it catches up and keeps the same tip, the indexer keeps getting its events | `e2e/test_restart.py` here | second pass of `e2e/run.sh` | staging deploy |
 | E2E | behaviour across services through their APIs (submit a task → node mines → indexer → GraphQL) | `e2e/test_*.py` in the service repository | Jenkins with the smoke tests | staging deploy |
 
 ### Unit and integration tests (GitHub Actions, `ci-ok`)
