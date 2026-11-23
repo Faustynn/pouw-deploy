@@ -36,7 +36,7 @@ pipeline {
         // Two builds on one agent must not share a compose project or images
         TEST_PROJECT = "pouw-test-${env.EXECUTOR_NUMBER}"
         IMAGE_TAG = "ci-${env.EXECUTOR_NUMBER}"
-        NOTIFY_EMAIL = 'xmeredov@stuba.sk'
+        NOTIFY_EMAIL = 'alglivecompany@gmail.com'
     }
 
     triggers {
