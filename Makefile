@@ -19,13 +19,16 @@ SKIP_FILE = $(if $(IMAGE_TAG),$(shell [ -f build/skip.yml ] && echo -f build/ski
 COMPOSE = docker compose -f compose.yml $(SKIP_FILE)
 comma := ,
 
-# The server is the place with the profile proxy. There the explorer lives next
-# to Grafana (grafana.<domain> -> explorer.<domain>) unless .env says otherwise,
+# The server is the place with the profile proxy. There the explorer and
+# Alertmanager live next to Grafana (grafana.<domain> -> explorer.<domain>,
+# alerts.<domain>) unless .env says otherwise,
 # and node-exporter and cAdvisor always run, so the panels of the server and of
 # the containers have data. Without it a new variable in compose would need a
 # manual edit of .env on the server first.
 ifneq ($(filter proxy,$(subst $(comma), ,$(COMPOSE_PROFILES))),)
 EXPLORER_HOST ?= $(patsubst grafana.%,explorer.%,$(GRAFANA_HOST))
+ALERTMANAGER_HOST ?= $(patsubst grafana.%,alerts.%,$(GRAFANA_HOST))
+ALERTMANAGER_URL ?= https://$(ALERTMANAGER_HOST)
 ifeq ($(filter host-metrics,$(subst $(comma), ,$(COMPOSE_PROFILES))),)
 override COMPOSE_PROFILES := $(COMPOSE_PROFILES),host-metrics
 endif
@@ -119,10 +122,14 @@ check: ## Validate compose, Prometheus with tests of its alerts, Alertmanager an
 			--entrypoint /bin/sh quay.io/prometheus/alertmanager:v0.35.0 \
 			/etc/alertmanager/run.sh check || exit 1; \
 	done
+	# the hash comes from stdin as in proxy/run.sh, so that path is checked too
 	docker run --rm -v "$(CURDIR)/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" \
 		-e ACME_EMAIL=admin@localhost -e JENKINS_HOST=jenkins.localhost \
 		-e GRAFANA_HOST=grafana.localhost -e EXPLORER_HOST=explorer.localhost \
-		caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+		-e ALERTMANAGER_HOST=alerts.localhost -e ALERTMANAGER_USER=admin \
+		--entrypoint /bin/sh caddy:2 -c \
+		'ALERTMANAGER_HASH="$$(echo check | caddy hash-password)" && export ALERTMANAGER_HASH && \
+		caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
 
 images: ## Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
 	./scripts/build-images.sh
