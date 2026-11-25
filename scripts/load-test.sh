@@ -47,6 +47,17 @@ if api -f | grep -q '"status":"running"'; then
     exit 1
 fi
 
+# The scenarios read from height 1 on (min_height), a fresh test copy is at 0
+# for its first block or two; the generator refuses to start below it
+for _ in $(seq 60); do
+    height="$(docker run --rm --network "${project}_default" curlimages/curl:8.17.0 -fsS --max-time 10 \
+        -H 'Accept: application/json' http://node-1:8000/v1/blocks/head 2>/dev/null |
+        grep -oE '"height": *[0-9]+' | head -1 | grep -oE '[0-9]+$')" || height=""
+    [[ "${height:-0}" -ge 1 ]] && break
+    echo "Waiting for the first block of $project (height ${height:-?})"
+    sleep 5
+done
+
 started_ms="$(($(date +%s) * 1000))"
 path=/api/v1/start
 api -f -X POST -H 'Content-Type: application/json' -d "{\"scenario_name\":\"$scenario\"}"
@@ -71,7 +82,25 @@ ended_ms="$(($(date +%s) * 1000))"
 echo "$status" >"$report_dir/$scenario-status.json"
 
 path=/api/v1/results
-api -f >"$report_dir/$scenario.csv"
+if ! api -f >"$report_dir/$scenario.csv" 2>/dev/null; then
+    # A scenario that ends in an error has no results (404): the report and
+    # the test in Jenkins say why instead of a bare curl error
+    error="$(echo "$status" | grep -oE '"error":"([^"\\]|\\.)*"' | head -1 | cut -d'"' -f4-)"
+    error="${error%\"}"
+    {
+        echo "# Load test $scenario"
+        echo
+        echo "- Network: $project, generator state: ${state:-unknown}"
+        echo "- Result: FAILED, the scenario has no results"
+        echo "- Error: ${error:-none reported}"
+        echo "- Dashboard: ${grafana_url%/}/d/pouw-workload?var-project=$project&from=$started_ms&to=$ended_ms"
+    } >"$report_dir/$scenario.md"
+    message="$(printf '%s' "${error:-the scenario has no results}" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')"
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="load" tests="1" failures="1">\n  <testcase classname="load.%s" name="scenario"><failure message="%s"/></testcase>\n</testsuite>\n' \
+        "$scenario" "$message" >"$report_dir/load-$scenario.xml"
+    cat "$report_dir/$scenario.md"
+    exit 1
+fi
 
 # Summary, JUnit and the verdict from the CSV
 awk -F, -v scenario="$scenario" -v state="$state" -v project="$project" \
