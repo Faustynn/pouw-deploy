@@ -13,7 +13,7 @@
 # Exit code 1 when the generator stops with an error, nothing completed, or
 # an operation had failures or rejections. Called by `make load` (staging,
 # the panels are in its Grafana while it runs) and by the Jenkins job
-# pouw-load-test (a test copy of the network).
+# PouwZK-dev/load-test (a test copy of the network).
 set -euo pipefail
 
 project="${1:?Usage: $0 <compose project> <scenario>}"

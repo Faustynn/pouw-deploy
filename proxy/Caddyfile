@@ -10,12 +10,15 @@
 	reverse_proxy jenkins:8080
 }
 
+# The explorer, Hasura and Grafana by container name: on the server those of
+# the dev network share a Docker network with this Caddy (compose.edge.yml),
+# where the bare service names exist twice.
 {$GRAFANA_HOST} {
 	encode gzip
 	# Only the explorer may put Grafana into an iframe. allow_embedding drops
 	# X-Frame-Options from every page, the login page too.
 	header Content-Security-Policy "frame-ancestors 'self' https://{$EXPLORER_HOST}"
-	reverse_proxy grafana:3000
+	reverse_proxy pouw-grafana-1:3000
 }
 
 # The explorer and its API on one host, so the browser needs no CORS. Only
@@ -24,7 +27,7 @@
 {$EXPLORER_HOST} {
 	encode gzip
 	handle /v1/graphql {
-		reverse_proxy hasura:8080
+		reverse_proxy pouw-hasura-1:8080
 	}
 	# nginx of the explorer passes all of /v1/ to Hasura (pouw-dashboard/web/nginx.conf),
 	# so the rest of it is closed here: /v1/metadata, /v1/query, /v1/version, ...
@@ -32,7 +35,28 @@
 		respond 404
 	}
 	handle {
-		reverse_proxy dashboard:8080
+		reverse_proxy pouw-dashboard-1:8080
+	}
+}
+
+# The dev network (project pouw-dev, scripts/dev-setup.sh): the same, over the
+# Docker network of compose.edge.yml. 502 until the dev network runs.
+{$GRAFANA_DEV_HOST} {
+	encode gzip
+	header Content-Security-Policy "frame-ancestors 'self' https://{$EXPLORER_DEV_HOST}"
+	reverse_proxy pouw-dev-grafana-1:3000
+}
+
+{$EXPLORER_DEV_HOST} {
+	encode gzip
+	handle /v1/graphql {
+		reverse_proxy pouw-dev-hasura-1:8080
+	}
+	handle /v1/* {
+		respond 404
+	}
+	handle {
+		reverse_proxy pouw-dev-dashboard-1:8080
 	}
 }
 

@@ -18,7 +18,10 @@ BACKUP_DIR ?= ./backups
 # $(wildcard): make caches directories at start and would miss the file that
 # `make images` writes in the same run (make dev).
 SKIP_FILE = $(if $(IMAGE_TAG),$(shell [ -f build/skip.yml ] && echo -f build/skip.yml))
-COMPOSE = docker compose -f compose.yml $(SKIP_FILE)
+# EDGE_NETWORK: the Docker network the Caddy of staging shares with the dev
+# network on the server (compose.edge.yml); set there, never in a test copy
+EDGE_FILE = $(if $(EDGE_NETWORK),-f compose.edge.yml)
+COMPOSE = docker compose -f compose.yml $(SKIP_FILE) $(EDGE_FILE)
 comma := ,
 
 # The server is the place with the profile proxy. There the explorer and
@@ -31,6 +34,11 @@ ifneq ($(filter proxy,$(subst $(comma), ,$(COMPOSE_PROFILES))),)
 EXPLORER_HOST ?= $(patsubst grafana.%,explorer.%,$(GRAFANA_HOST))
 ALERTMANAGER_HOST ?= $(patsubst grafana.%,alerts.%,$(GRAFANA_HOST))
 ALERTMANAGER_URL ?= https://$(ALERTMANAGER_HOST)
+# ...the explorer and Grafana of the dev network (scripts/dev-setup.sh) behind
+# the same Caddy, over the shared Docker network
+EXPLORER_DEV_HOST ?= $(patsubst grafana.%,explorer-dev.%,$(GRAFANA_HOST))
+GRAFANA_DEV_HOST ?= $(patsubst grafana.%,grafana-dev.%,$(GRAFANA_HOST))
+EDGE_NETWORK ?= pouw-edge
 ifeq ($(filter host-metrics,$(subst $(comma), ,$(COMPOSE_PROFILES))),)
 override COMPOSE_PROFILES := $(COMPOSE_PROFILES),host-metrics
 endif
@@ -57,7 +65,7 @@ endif
 # e-mailed.
 TEST_PROJECT ?= pouw-test
 TEST_ENV = COMPOSE_PROFILES=$(TEST_PROFILES) SECRETS_DIR=.secrets ALERT_EMAIL=
-TEST_COMPOSE = $(COMPOSE) -f compose.test.yml -p $(TEST_PROJECT)
+TEST_COMPOSE = docker compose -f compose.yml $(SKIP_FILE) -f compose.test.yml -p $(TEST_PROJECT)
 TEST = $(TEST_ENV) $(TEST_COMPOSE)
 
 # e2e/run.sh of the services from these clones (made by `make images`),
@@ -73,7 +81,7 @@ DASHBOARD_VERSION := $(IMAGE_TAG)
 DASHBOARD_HASURA_VERSION := $(IMAGE_TAG)
 endif
 
-.PHONY: help secrets up down restart seed ps logs check images test test-down dev dev-test \
+.PHONY: help secrets edge up down restart seed ps logs check images test test-down dev dev-test \
 	backup restore-test test-alert load test-load test-up test-run test-smoke test-backup \
 	test-devnet test-services load-start load-stop load-status
 
@@ -93,7 +101,7 @@ secrets: ## Prepare secrets (random locally, from pass on the server)
 # so only missing images (Postgres, Grafana, ...) are pulled. Prometheus reads
 # its configuration and alert rules only at start, so a deploy that changes
 # them without recreating the container reloads it.
-up: secrets ## Start services according to COMPOSE_PROFILES
+up: secrets edge ## Start services according to COMPOSE_PROFILES
 	@mkdir -p -m 700 "$(BACKUP_DIR)"
 ifndef IMAGE_TAG
 	$(COMPOSE) pull -q --ignore-buildable
@@ -101,10 +109,16 @@ endif
 	$(COMPOSE) up -d --build --pull missing --remove-orphans --wait --wait-timeout 300
 	$(COMPOSE) exec -T prometheus kill -HUP 1
 
+# The shared network of compose.edge.yml, created by whichever network starts first
+edge:
+ifneq ($(EDGE_NETWORK),)
+	@docker network inspect $(EDGE_NETWORK) >/dev/null 2>&1 || docker network create $(EDGE_NETWORK)
+endif
+
 down: ## Stop services of all profiles (data is kept)
 	$(COMPOSE) down --remove-orphans
 
-restart: secrets ## Restart services, e.g. after a password change in pass
+restart: secrets edge ## Restart services, e.g. after a password change in pass
 	@mkdir -p -m 700 "$(BACKUP_DIR)"
 	$(COMPOSE) up -d --force-recreate --wait --wait-timeout 300
 
@@ -120,6 +134,7 @@ logs: ## Logs of a service, e.g. make logs SERVICE=indexer [SINCE=1h] (without S
 
 check: ## Validate compose, Prometheus with tests of its alerts, Alertmanager and the Caddyfile
 	COMPOSE_PROFILES=jenkins,proxy,network,host-metrics,load $(COMPOSE) config -q
+	EDGE_NETWORK=pouw-edge COMPOSE_PROFILES=jenkins,proxy,load docker compose -f compose.yml -f compose.edge.yml config -q
 	docker run --rm -v "$(CURDIR)/monitoring/prometheus:/etc/prometheus:ro" \
 		--entrypoint /bin/sh quay.io/prometheus/prometheus:v3.0.0 -c \
 		'promtool check config /etc/prometheus/prometheus.yml && promtool test rules /etc/prometheus/tests/*.yml'
@@ -134,6 +149,7 @@ check: ## Validate compose, Prometheus with tests of its alerts, Alertmanager an
 		-e ACME_EMAIL=admin@localhost -e JENKINS_HOST=jenkins.localhost \
 		-e GRAFANA_HOST=grafana.localhost -e EXPLORER_HOST=explorer.localhost \
 		-e ALERTMANAGER_HOST=alerts.localhost -e ALERTMANAGER_USER=admin \
+		-e EXPLORER_DEV_HOST=explorer-dev.localhost -e GRAFANA_DEV_HOST=grafana-dev.localhost \
 		--entrypoint /bin/sh caddy:2 -c \
 		'ALERTMANAGER_HASH="$$(echo check | caddy hash-password)" && export ALERTMANAGER_HASH && \
 		caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
@@ -258,5 +274,5 @@ load-status: ## The default load and what the generator of the running network r
 	@$(COMPOSE) --profile load ps --format '{{.Service}}: {{.Status}}' workload-driver | grep . || echo "workload-driver: does not run"
 	@$(COMPOSE) exec -T workload curl -fsS http://localhost:8000/api/v1/status; echo
 
-test-load: test-up ## Load test in a separate network copy, like the Jenkins job pouw-load-test
+test-load: test-up ## Load test in a separate network copy, like the Jenkins job PouwZK-dev/load-test
 	GRAFANA_URL= ./scripts/load-test.sh $(TEST_PROJECT) $(SCENARIO)

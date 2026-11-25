@@ -46,5 +46,5 @@ unclassified:
       - credentialsId: github-webhook-secret
 
 jobs:
-  - file: /var/jenkins_casc/jobs/github.groovy
-  - file: /var/jenkins_casc/jobs/load-test.groovy
+  - file: /var/jenkins_casc/jobs/staging.groovy
+  - file: /var/jenkins_casc/jobs/dev.groovy

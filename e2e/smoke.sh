@@ -121,9 +121,11 @@ for uid in pouw-network pouw-services pouw-server pouw-workload; do
         "wget -qO- \"http://admin:\$(cat /run/secrets/grafana_admin_password)@localhost:3000/api/dashboards/uid/$uid\" | grep -q '\"uid\":\"$uid\"'"
 done
 
-# Postgres datasource: logs in as the read-only user grafana (ADR-0008)
+# Postgres datasource: logs in as the read-only user grafana (ADR-0008). Up to
+# 3 tries: after Postgres was recreated (a new image of postgres:16), the first
+# query of Grafana takes a dead connection of its pool and fails once
 check "grafana reads the indexer database" grafana \
-    'wget -qO- "http://admin:$(cat /run/secrets/grafana_admin_password)@localhost:3000/api/datasources/uid/indexer/health" | grep -q "\"status\": *\"OK\""'
+    'for i in 1 2 3; do wget -qO- "http://admin:$(cat /run/secrets/grafana_admin_password)@localhost:3000/api/datasources/uid/indexer/health" | grep -q "\"status\": *\"OK\"" && exit 0; sleep 2; done; exit 1'
 
 check "the grafana database user is read-only" postgres \
     "psql -U pouw -d pouw -tAc \"SELECT rolsuper OR rolcreatedb OR rolcreaterole OR NOT ('default_transaction_read_only=on' = ANY(coalesce(rolconfig, '{}'))) OR EXISTS (SELECT FROM information_schema.role_table_grants WHERE grantee = 'grafana' AND privilege_type <> 'SELECT') FROM pg_roles WHERE rolname = 'grafana'\" | grep -qx f"
@@ -201,6 +203,15 @@ check "workload is healthy" workload \
 
 check "dashboard serves the explorer" dashboard \
     'wget -qO /dev/null http://127.0.0.1:8080/'
+
+# What runs where: every service answers the commit of its image (build args
+# of docker.yml and make images). remote.sh also compares it with the deployed version.
+has_commit='grep -Eq "\"commit\": *\"[0-9a-f]{7}"'
+for n in node-1 node-2 node-3 indexer workload; do
+    check "$n shows its commit at /manage/info" "$n" "curl -fsS http://localhost:8000/manage/info | $has_commit"
+done
+check "dashboard shows its commit at /manage/info" dashboard \
+    "wget -qO- http://127.0.0.1:8080/manage/info | $has_commit"
 
 # The explorer asks /v1/graphql on its own host: on staging the proxy sends it
 # to Hasura, elsewhere the nginx of the explorer does

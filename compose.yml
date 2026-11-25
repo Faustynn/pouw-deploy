@@ -48,6 +48,9 @@ x-health: &health
 x-node: &node
   <<: [*restart, *logging]
   image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
+  # Every node mines with a whole core. NODE_CPUS caps that where a second
+  # network shares the server (the dev network: 0.5); 0 = no cap
+  cpus: ${NODE_CPUS:-0}
   depends_on:
     genesis:
       condition: service_completed_successfully
@@ -583,6 +586,9 @@ services:
       GRAFANA_HOST: ${GRAFANA_HOST:-grafana.localhost}
       EXPLORER_HOST: ${EXPLORER_HOST:-explorer.localhost}
       ALERTMANAGER_HOST: ${ALERTMANAGER_HOST:-alerts.localhost}
+      # The dev network on the same server (scripts/dev-setup.sh), reached over EDGE_NETWORK
+      EXPLORER_DEV_HOST: ${EXPLORER_DEV_HOST:-explorer-dev.localhost}
+      GRAFANA_DEV_HOST: ${GRAFANA_DEV_HOST:-grafana-dev.localhost}
       ALERTMANAGER_USER: ${ALERTMANAGER_USER:-admin}
     secrets:
       - alertmanager_password

@@ -12,33 +12,13 @@
 // version and an e-mail goes to NOTIFY_EMAIL (main only, PRs show on GitHub).
 
 // Build with Parameters picks the test groups (SMOKE, BACKUP, DEVNET,
-// SERVICE_E2E), the services and the pytest tests (TESTS, a -k expression).
-// Push, PR and the evening build run everything; only such a full run of main
-// deploys to staging.
+// SERVICE_E2E), the services and the pytest tests (TESTS, a -k expression),
+// see jenkins/tests.groovy. Push, PR and the evening build run everything;
+// only such a full run of main deploys to staging. Branches of the services
+// are tried in Jenkins → PouwZK-dev (jenkins/dev.Jenkinsfile).
 
-// make test variables from the parameters. On the first build of a branch the
-// parameters do not exist yet (null), that counts as everything.
-def testSelection() {
-    def picked = []
-    if (params.SMOKE != false) { picked.add('smoke') }
-    if (params.BACKUP != false) { picked.add('backup') }
-    if (params.DEVNET != false) { picked.add('devnet') }
-    if (params.SERVICE_E2E != false) { picked.add('services') }
-    def suites = picked.join(',')
-    def services = (params.SERVICES ?: '').trim()
-    def tests = (params.TESTS ?: '').trim()
-    if (!suites) {
-        error 'No test group selected'
-    }
-    if (!(services ==~ /[a-z,\- ]*/)) {
-        error "SERVICES: comma-separated names, e.g. node,indexer (got: ${services})"
-    }
-    if (!(tests ==~ /[A-Za-z0-9_ .()\[\]\-]*/)) {
-        error "TESTS: a pytest -k expression of names, and/or/not and brackets (got: ${tests})"
-    }
-    return [suites: suites, services: services.replace(' ', ''), tests: tests,
-            full: suites == 'smoke,backup,devnet,services' && !services && !tests]
-}
+// The selection (jenkins/tests.groovy), set in the stage Devnet tests
+selection = null
 
 // E-mail for builds of main, only when SMTP is configured. Without SMTP the build just logs that it skipped it.
 def sendNotification(String subject, String body) {
@@ -103,16 +83,12 @@ pipeline {
         stage('Devnet tests') {
             steps {
                 script {
-                    def t = testSelection()
-                    if (!t.full) {
-                        currentBuild.description = (currentBuild.description ?: '') +
-                            "\nsuites: ${t.suites}" + (t.services ? " · services: ${t.services}" : '') +
-                            (t.tests ? " · tests: ${t.tests}" : '')
+                    def tests = load 'jenkins/tests.groovy'
+                    selection = tests.selection(params)
+                    if (!selection.full) {
+                        currentBuild.description = (currentBuild.description ?: '') + '\n' + tests.describe(selection)
                     }
-                    // as environment, so the values never pass through a shell command line
-                    withEnv(["SUITES=${t.suites}", "SERVICES=${t.services}", "TESTS=${t.tests}"]) {
-                        sh 'make test'
-                    }
+                    tests.run(selection)
                 }
             }
         }
@@ -120,12 +96,12 @@ pipeline {
             when {
                 branch 'main'
                 triggeredBy 'TimerTrigger'
-                expression { testSelection().full }
+                expression { selection?.full }
             }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'github-app',
                         usernameVariable: 'GH_APP', passwordVariable: 'GH_TOKEN')]) {
-                    sh './scripts/staging-deploy.sh "$GIT_COMMIT"'
+                    sh './scripts/gh-deploy.sh staging deploy "$GIT_COMMIT"'
                 }
             }
         }
