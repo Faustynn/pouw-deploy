@@ -1,4 +1,4 @@
-// Load test (pouw-deploy#44): a scenario of pouw-workload against a test copy of
+// Load test (pouw-deploy#44, Jenkins → PouwZK-dev → load-test): a scenario of pouw-workload against a test copy of
 // the network with the :main images from GHCR (make test-load). The report is
 // in the artifacts (reports/load: Markdown summary, CSV per operation, last
 // status of the generator) and in Tests (suite load, one test per operation).

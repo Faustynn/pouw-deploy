@@ -12,33 +12,51 @@ name: Deploy
 #   var    DEPLOY_USER          user the network runs under
 #   var    DEPLOY_KNOWN_HOSTS   "127.0.0.1 " + the server's /etc/ssh/ssh_host_ed25519_key.pub
 
+# The run name carries the request ID of the caller (scripts/gh-deploy.sh), so
+# Jenkins finds its own run among others started in the same minute
+run-name: ${{ inputs.action }} ${{ inputs.target }}${{ inputs.scenario && format(' {0}', inputs.scenario) || '' }}${{ inputs.request && format(' [{0}]', inputs.request) || '' }}
+
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "Network: staging (main, the nightly build) or dev (any branch, PouwZK-dev in Jenkins)"
+        type: choice
+        options: [staging, dev]
+        default: staging
       action:
         description: What to do
         type: choice
-        options: [deploy, restart, status]
+        options: [deploy, restart, status, load]
         default: deploy
       sha:
-        description: Commit from main to deploy (empty = this run). Rollback = an older commit.
+        description: "Commit of pouw-deploy to deploy (empty = this run). staging: from main, dev: from any branch. Rollback = an older commit."
         type: string
         required: false
       versions:
         description: Service versions, e.g. "NODE_VERSION=sha-abc1234 INDEXER_VERSION=sha-def5678" (empty = :main). Filled in by Jenkins after the nightly test.
         type: string
         required: false
+      scenario:
+        description: "load: the scenario of pouw-workload to run again and again (transfers-steady, transfers-spike, ...), off = no load"
+        type: string
+        required: false
+      request:
+        description: Request ID of the caller, part of the run name (filled in by scripts/gh-deploy.sh)
+        type: string
+        required: false
 
 permissions:
   contents: read
 
+# One thing at a time on the server, whatever the network
 concurrency:
-  group: deploy-staging
+  group: deploy-server
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: ${{ inputs.action }}
+    name: ${{ inputs.action }} ${{ inputs.target }}
     runs-on: [self-hosted, staging]
     environment: staging
     timeout-minutes: 20
@@ -55,17 +73,29 @@ jobs:
 
       - name: Run ${{ inputs.action }} on the server
         env:
+          NETWORK: ${{ inputs.target }}
           ACTION: ${{ inputs.action }}
+          SCENARIO: ${{ inputs.scenario }}
           SHA: ${{ inputs.sha || github.sha }}
           VERSIONS: ${{ inputs.versions }}
           TARGET: ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}
         run: |
-          cmd="$ACTION"
+          # remote.sh takes staging when no network is named; staging stays
+          # without it, so a server still on an older remote.sh understands it
+          case "$NETWORK" in
+            staging) net="" ;;
+            dev) net="dev " ;;
+            *) echo "::error::Unknown target $NETWORK"; exit 1 ;;
+          esac
+          cmd="$net$ACTION"
           if [[ "$ACTION" == deploy ]]; then
             [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full commit SHA"; exit 1; }
             # remote.sh validates the versions; here we only check allowed characters
             [[ "$VERSIONS" =~ ^[A-Za-z0-9_=\ -]*$ ]] || { echo "::error::Invalid versions"; exit 1; }
-            cmd="deploy $SHA $VERSIONS"
+            cmd="${net}deploy $SHA $VERSIONS"
+          elif [[ "$ACTION" == load ]]; then
+            [[ "$SCENARIO" =~ ^[a-z0-9-]+$ ]] || { echo "::error::scenario: a name like transfers-steady, or off"; exit 1; }
+            cmd="${net}load $SCENARIO"
           fi
           set -o pipefail
           out="$RUNNER_TEMP/out.txt"
@@ -73,7 +103,7 @@ jobs:
             -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes "$TARGET" "$cmd" | tee "$out"
           {
-            echo "### $ACTION"
+            echo "### $NETWORK: $ACTION"
             echo '```'
             cat "$out"
             echo '```'

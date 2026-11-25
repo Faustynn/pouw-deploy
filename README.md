@@ -1,6 +1,6 @@
 # pouw-deploy
 
-[![Jenkins](https://jenkins.147-175-151-18.sslip.io/buildStatus/icon?job=PoUW-ZK%2Fpouw-deploy%2Fmain&subject=nightly)](https://jenkins.147-175-151-18.sslip.io/job/PoUW-ZK/job/pouw-deploy/job/main/)
+[![Jenkins](https://jenkins.147-175-151-18.sslip.io/buildStatus/icon?job=PouwZK-staging%2FPoUW-ZK%2Fpouw-deploy%2Fmain&subject=nightly)](https://jenkins.147-175-151-18.sslip.io/job/PouwZK-staging/job/PoUW-ZK/job/pouw-deploy/job/main/)
 
 The whole PoUW-ZK network in one place: Docker Compose for all services,
 monitoring (Prometheus, Grafana), the network tests and Jenkins, which tests
@@ -60,7 +60,7 @@ make load SCENARIO=transfers          # 20 tx/s stress test
 
 The workload reads through `light-node` and submits round-robin to
 `node-1`, `node-2`, and `node-3`. The same scenarios are available in the
-Jenkins **Load test** job. Grafana observes a run; switching a scenario is done
+Jenkins job **PouwZK-dev → load-test** (in a test copy of the network). Grafana observes a run; switching a scenario is done
 through the `make` command, Jenkins, or `POST /api/v1/start`.
 
 On the server networks `workload-driver` keeps a default load running:
@@ -68,7 +68,8 @@ On the server networks `workload-driver` keeps a default load running:
 runs in a test copy. `make load-start SCENARIO=transfers-spike` switches it at
 once, `make load-stop` turns it off, `make load-status` shows what runs.
 `make load` refuses to start while the default load is on, so the report of a
-load test is not mixed with it.
+load test is not mixed with it. In Jenkins: **PouwZK-staging → load** and
+**PouwZK-dev → load** (`off` = no load).
 
 Logins: Grafana `admin` / `.secrets/grafana_admin_password`, Hasura admin
 secret `.secrets/hasura_admin_secret` (queries without it get the read-only
@@ -448,7 +449,7 @@ make load           Load test on the running network (staging); watch it in Graf
 make load-start     Switch the default load of the running network to SCENARIO=<name> (repeats)
 make load-stop      Turn the default load of the running network off (until load-start)
 make load-status    The default load and what the generator of the running network runs now
-make test-load      Load test in a separate network copy, like the Jenkins job pouw-load-test
+make test-load      Load test in a separate network copy, like the Jenkins job PouwZK-dev/load-test
 ```
 
 ## Staging
@@ -458,6 +459,7 @@ make test-load      Load test in a separate network copy, like the Jenkins job p
 | Jenkins | <https://jenkins.147-175-151-18.sslip.io> (GitHub login) |
 | Grafana | <https://grafana.147-175-151-18.sslip.io> |
 | Explorer | <https://explorer.147-175-151-18.sslip.io> (GraphQL on `/v1/graphql`, the rest of Hasura is not reachable from outside) |
+| Dev network | <https://explorer-dev.147-175-151-18.sslip.io>, <https://grafana-dev.147-175-151-18.sslip.io> (below) |
 
 Changes reach the server only through `main`: every evening Jenkins builds
 `main` of all services, runs the smoke and e2e tests and, if they pass, the
@@ -468,6 +470,49 @@ operations are in [pouw-docs → Server](https://pouw-zk.github.io/pouw-docs/ser
 
 Passwords never go into git or `.env`. Jenkins is configured only through
 `jenkins/casc/`, changes in its UI are lost on restart.
+
+Every service answers `GET /manage/info` with the commit, branch and build
+time of its image; after a deploy `scripts/remote.sh` compares them with the
+deployed versions and rolls back on a mismatch.
+
+## Developing through Jenkins (the dev network)
+
+Try a branch in the whole network before its PR is merged, without running
+the network on your laptop:
+
+1. Push the branch to **PoUW-ZK** (not your fork: Jenkins does not build forks,
+   and `docker.yml` publishes `:sha-xxxxxxx` and `:branch-<name>` only there).
+2. Jenkins → **PouwZK-dev** → the job of the repository (`pouw-indexer`, ...)
+   → Build with Parameters: `BRANCH=feature/x`. Optionally only some tests
+   (`SMOKE`, `BACKUP`, `DEVNET`, `SERVICE_E2E`, `SERVICES`, `TESTS`). A change
+   across repositories: job **all**, a branch per repository.
+3. Jenkins builds that branch with `main` of the other repositories, tests it
+   in a test copy and, when all tests ran and passed (and `DEPLOY` is on),
+   deploys the same commits to the **dev network**:
+   <https://explorer-dev.147-175-151-18.sslip.io>. Which commit runs there:
+   `https://explorer-dev.…/manage/info`, the build description, or Deploy →
+   `status` with target `dev`.
+4. Merge the PR. **PouwZK-staging** works as before: CI on push and PR, the
+   nightly build of `main` deploys to staging.
+
+The dev network is shared, the last green deploy wins. It runs next to
+staging on the same server: the checkout `../pouw-deploy-dev`, compose project
+`pouw-dev`, its own volumes and random secrets (`.secrets` there), nodes capped
+at half a core (`NODE_CPUS`), no alert e-mails. The Caddy of staging serves it
+over the Docker network `pouw-edge` (`compose.edge.yml`). Set it up once with
+`./scripts/dev-setup.sh` from the checkout of staging.
+
+| Jenkins | What it does |
+| --- | --- |
+| PouwZK-staging → PoUW-ZK | the multibranch jobs of every repository (CI, nightly, staging deploy) |
+| PouwZK-staging → load | the default load of staging: a scenario again and again, or `off` |
+| PouwZK-dev → pouw-node, pouw-indexer, pouw-workload, pouw-dashboard, pouw-deploy | `BRANCH` of that repository → tests → dev network |
+| PouwZK-dev → all | a branch per repository → tests → dev network |
+| PouwZK-dev → load | the default load of the dev network |
+| PouwZK-dev → load-test | a graded load test in a test copy (report in the artifacts) |
+
+By hand, without Jenkins: GitHub → Actions → Deploy with `target` `staging` or
+`dev` and the action `deploy`, `restart`, `status` or `load` (with `scenario`).
 
 ## Troubleshooting
 

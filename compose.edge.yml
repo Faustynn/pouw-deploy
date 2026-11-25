@@ -1,0 +1,23 @@
+# The server runs two networks: staging (project pouw) and dev (project
+# pouw-dev, scripts/dev-setup.sh). Only the Caddy of staging has ports 80 and
+# 443; it reaches the explorer, Hasura and Grafana of both over this shared
+# Docker network. The Makefile adds this file when EDGE_NETWORK is set (on the
+# server by default) and creates the network.
+#
+# Caddy addresses them by container name (pouw-dashboard-1,
+# pouw-dev-dashboard-1): the service names (dashboard, ...) are on this network
+# twice, once per project.
+services:
+  proxy:
+    networks: [default, jenkins, edge]
+  dashboard:
+    networks: [default, edge]
+  hasura:
+    networks: [default, edge]
+  grafana:
+    networks: [default, edge]
+
+networks:
+  edge:
+    name: ${EDGE_NETWORK:?EDGE_NETWORK}
+    external: true

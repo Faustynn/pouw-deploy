@@ -28,4 +28,5 @@ jobs:
               }
           }
       }
-  - file: /var/jenkins_casc/jobs/load-test.groovy
+  # PouwZK-dev as on the server; its deploy and load jobs need the github-app credential
+  - file: /var/jenkins_casc/jobs/dev.groovy
