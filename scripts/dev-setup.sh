@@ -6,8 +6,8 @@
 #
 # The dev network is a second checkout ../pouw-deploy-dev, compose project
 # pouw-dev, with its own volumes, random secrets in its .secrets and other
-# ports on 127.0.0.1. Nobody gets its alerts. Its nodes mine with half a core
-# each (NODE_CPUS). The Caddy of staging serves it on explorer-dev.<domain> and
+# ports on 127.0.0.1. Nobody gets its alerts. Its nodes mine with a quarter of
+# the CPU weight of staging (NODE_CPU_SHARES), so they give way when cores are busy. The Caddy of staging serves it on explorer-dev.<domain> and
 # grafana-dev.<domain> over the Docker network pouw-edge (compose.edge.yml).
 # Jenkins (PouwZK-dev) deploys branches there through the Deploy workflow:
 # remote.sh dev deploy <sha> ... Safe to re-run, an existing .env is kept.
@@ -36,7 +36,7 @@ EDGE_NETWORK=pouw-edge
 SECRETS_SOURCE=local
 SECRETS_DIR=.secrets
 GRAFANA_URL=https://grafana-dev.$domain/
-NODE_CPUS=0.5
+NODE_CPU_SHARES=256
 BACKUP_DIR=./backups
 # Next to the ports of staging, all on 127.0.0.1
 PROMETHEUS_PORT=19090
