@@ -31,6 +31,16 @@ api() {
         -sS --max-time 30 "$@" "http://workload:8000${path}"
 }
 
+# The default load (workload-driver) would start its scenario again as soon
+# as this one ends, and the two would mix in the report
+driver="$(docker ps -q --filter "label=com.docker.compose.project=$project" \
+    --filter label=com.docker.compose.service=workload-driver --filter status=running | head -1)"
+if [[ -n "$driver" ]] &&
+    ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$driver" | grep -qx 'LOAD_SCENARIO=off'; then
+    echo "$project runs a default load (workload-driver), turn it off first: make load-stop" >&2
+    exit 1
+fi
+
 path=/api/v1/status
 if api -f | grep -q '"status":"running"'; then
     echo "The generator of $project is already running a scenario, stop it first" >&2

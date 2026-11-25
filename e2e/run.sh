@@ -36,12 +36,15 @@ transfer="$(docker run --rm --entrypoint pouw "$node_image" transfer \
 
 # pytest in a container attached to the network:
 #   pytest_pass <suite> <pytest target> [docker run options...]
-# JUnit XML goes to $JUNIT_DIR/<suite>.xml.
+# JUnit XML goes to $JUNIT_DIR/<suite>.xml. PYTEST_ADDOPTS (make test TESTS=...)
+# picks some tests; when it matches none in a pass, pytest exits with 5 and that
+# is fine: the test is in the other pass or another suite.
 pytest_pass() {
-    local suite="$1" target="$2"
+    local suite="$1" target="$2" status=0
     shift 2
     docker run --rm \
         --network "${project}_default" \
+        -e PYTEST_ADDOPTS \
         "$@" \
         --user "$(id -u):$(id -g)" \
         -e HOME=/tmp \
@@ -53,7 +56,13 @@ pytest_pass() {
         -w /e2e \
         python:3.12-slim \
         sh -c "pip install -q --user --no-warn-script-location -r requirements.txt &&
-            python -m pytest -p no:cacheprovider -rxXs -o junit_suite_name=$suite --junitxml=/reports/$suite.xml $target"
+            python -m pytest -p no:cacheprovider -rxXs -o junit_suite_name=$suite --junitxml=/reports/$suite.xml $target" ||
+        status=$?
+    if [[ "$status" == 5 && -n "${PYTEST_ADDOPTS:-}" ]]; then
+        echo "No test of $suite matches PYTEST_ADDOPTS ($PYTEST_ADDOPTS)"
+        status=0
+    fi
+    return "$status"
 }
 
 failed=0

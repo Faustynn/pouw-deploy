@@ -7,6 +7,8 @@ name: pouw
 #   jenkins      Jenkins controller, agent and an isolated Docker for tests
 #   proxy        Caddy with HTTPS for Jenkins, Grafana and the explorer (server only)
 #   host-metrics node-exporter (the server) and cAdvisor (its containers) for Prometheus
+#   load         workload-driver, the default load of the network (LOAD_SCENARIO,
+#                transfers-steady); on the server added by the Makefile
 #   network      services without an image in GHCR yet (none right now)
 #                (`make dev` builds them from your working copies and adds this profile)
 #
@@ -447,6 +449,23 @@ services:
     entrypoint: ["/bin/sh", "/soak/run.sh"]
     volumes:
       - ./soak/run.sh:/soak/run.sh:ro
+    depends_on:
+      workload:
+        condition: service_healthy
+
+  # The default load of the network (scripts/load-driver.sh): LOAD_SCENARIO
+  # from load.env runs again and again, off = no load. Switched by
+  # make load-start SCENARIO=<name> / make load-stop (Jenkins: the load jobs).
+  # The test copies never run it, their load tests start scenarios themselves.
+  workload-driver:
+    <<: [*restart, *logging]
+    profiles: [load]
+    image: curlimages/curl:8.17.0
+    entrypoint: ["/bin/sh", "/load-driver.sh"]
+    environment:
+      LOAD_SCENARIO: ${LOAD_SCENARIO:-transfers-steady}
+    volumes:
+      - ./scripts/load-driver.sh:/load-driver.sh:ro
     depends_on:
       workload:
         condition: service_healthy
