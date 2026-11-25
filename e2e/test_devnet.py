@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import pathlib
+import re
 import time
 
 import pytest
@@ -168,6 +169,34 @@ def test_indexer_keeps_up_with_the_node():
         return tip - indexed < MAX_LAG, {"node-1": tip, "indexer": indexed}
 
     wait_for(f"the indexer less than {MAX_LAG} blocks behind node-1", close)
+
+
+INDEXER_METRICS = "http://indexer:8000/metrics"
+CURSOR = re.compile(r'^pouw_indexer_event_cursor\{node_id="([^"]+)"\} (\d+)$', re.M)
+
+
+def event_cursors():
+    """The last stored event seq of every node, from the metrics of the indexer."""
+    text = requests.get(INDEXER_METRICS, timeout=10).text
+    return {name: int(seq) for name, seq in CURSOR.findall(text)}
+
+
+def test_indexer_stores_events_of_every_node():
+    """The indexer reads the event log of every node (EVENT_SOURCES), and every node
+    writes an event for each block it accepts, so the cursor of each node grows.
+    pouw-node#142: the indexer once stored no events for days without any error."""
+
+    def every_node_has_events():
+        cursors = event_cursors()
+        return all(cursors.get(n, 0) > 0 for n in NODES), cursors
+
+    start = wait_for("events of every node in the indexer", every_node_has_events)
+
+    def more_events():
+        now = event_cursors()
+        return all(now.get(n, 0) > start[n] for n in NODES), {"start": start, "now": now}
+
+    wait_for("new events of every node in the indexer", more_events)
 
 
 def test_hasura_serves_the_newest_block_of_the_node():

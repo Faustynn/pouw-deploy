@@ -146,3 +146,27 @@ tests:
             exp_annotations:
               summary: "pouw-indexer-1 restarts over and over"
               description: "The container restarted 3 times in 15 minutes."
+
+  # IndexerEventsStalled: node-1 keeps getting events; the cursor of node-2 stops
+  # after 10 minutes, as when a restarted node numbered its events below it
+  - interval: 15s
+    input_series:
+      - series: 'pouw_indexer_event_cursor{job="pouw-indexer", instance="indexer:8000", node_id="node-1"}'
+        values: "0+5x140"
+      - series: 'pouw_indexer_event_cursor{job="pouw-indexer", instance="indexer:8000", node_id="node-2"}'
+        values: "0+5x40 200x100"
+    alert_rule_test:
+      - eval_time: 24m
+        alertname: IndexerEventsStalled
+        exp_alerts: []
+      - eval_time: 32m
+        alertname: IndexerEventsStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: pouw-indexer
+              instance: indexer:8000
+              node_id: node-2
+            exp_annotations:
+              summary: "The indexer gets no events of node-2"
+              description: "For 20 minutes the indexer has stored no event of node-2. If the node runs (no NodeDown), compare its event seq (GET /v1/events) with pouw_indexer_event_cursor."
