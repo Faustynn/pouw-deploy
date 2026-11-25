@@ -30,7 +30,8 @@ pipeline {
     agent { label 'docker' }
 
     options {
-        timeout(time: 90, unit: 'MINUTES')
+        // as the Jenkinsfile: a cold build, the tests and the wait for GHCR
+        timeout(time: 120, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '30'))
         disableConcurrentBuilds()
         skipDefaultCheckout()

@@ -48,9 +48,11 @@ x-health: &health
 x-node: &node
   <<: [*restart, *logging]
   image: ghcr.io/pouw-zk/pouw-node:${NODE_VERSION:-main}
-  # Every node mines with a whole core. NODE_CPUS caps that where a second
-  # network shares the server (the dev network: 0.5); 0 = no cap
-  cpus: ${NODE_CPUS:-0}
+  # Every node mines with a whole core. Where a second network shares the
+  # server (the dev network) its nodes get a lower CPU weight: full speed
+  # while cores are free, staging and Jenkins first when they are not. A hard
+  # cap (cpus: 0.5) nearly stopped the chain: 1 block in 3 minutes, not 20 s
+  cpu_shares: ${NODE_CPU_SHARES:-1024}
   depends_on:
     genesis:
       condition: service_completed_successfully

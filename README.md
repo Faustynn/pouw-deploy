@@ -497,8 +497,8 @@ the network on your laptop:
 
 The dev network is shared, the last green deploy wins. It runs next to
 staging on the same server: the checkout `../pouw-deploy-dev`, compose project
-`pouw-dev`, its own volumes and random secrets (`.secrets` there), nodes capped
-at half a core (`NODE_CPUS`), no alert e-mails. The Caddy of staging serves it
+`pouw-dev`, its own volumes and random secrets (`.secrets` there), nodes with
+a quarter of the CPU weight of staging (`NODE_CPU_SHARES`), no alert e-mails. The Caddy of staging serves it
 over the Docker network `pouw-edge` (`compose.edge.yml`). Set it up once with
 `./scripts/dev-setup.sh` from the checkout of staging.
 

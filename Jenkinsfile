@@ -36,7 +36,9 @@ pipeline {
     agent { label 'docker' }
 
     options {
-        timeout(time: 60, unit: 'MINUTES')
+        // The nightly build alone takes about 50 minutes without Docker cache,
+        // the tests 10-15 more; 60 aborted the nightly of 23 and 24 Nov
+        timeout(time: 120, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '30'))
         disableConcurrentBuilds()
     }
