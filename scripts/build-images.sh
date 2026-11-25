@@ -7,6 +7,13 @@
 #
 #   make images SRC=..          # ../pouw-node, ../pouw-indexer, ...
 #
+# or with other branches than main (Jenkins PouwZK-dev), the rest from main:
+#
+#   make images REFS="pouw-indexer=feature/x pouw-node=fix/y"
+#
+# Every image gets GIT_COMMIT, GIT_BRANCH and BUILD_TIME as build args, the
+# services show them at GET /manage/info.
+#
 # Images are tagged ghcr.io/pouw-zk/<repository>:$IMAGE_TAG and make uses them
 # with the same IMAGE_TAG instead of :main from GHCR (e.g. make images test).
 # NO_CACHE=1 builds from scratch, without Docker cache (evening build in Jenkins).
@@ -41,6 +48,31 @@ images=(
 
 flags=(--pull)
 [[ "${NO_CACHE:-}" == 1 ]] && flags+=(--no-cache)
+build_time="$(date -u +%FT%TZ)"
+
+# REFS="pouw-indexer=feature/x ...": checked here, read by ref_of (no
+# associative arrays, the bash of macOS is 3.2)
+for r in ${REFS:-}; do
+    if [[ ! "$r" =~ ^(pouw-[a-z]+)=([A-Za-z0-9._/-]+)$ ]]; then
+        echo "Invalid entry of REFS: $r (expected pouw-<repository>=<branch>)" >&2
+        exit 2
+    fi
+    printf '%s\n' "${images[@]}" | grep -q "^${BASH_REMATCH[1]} " ||
+        { echo "REFS: unknown repository ${BASH_REMATCH[1]}" >&2; exit 2; }
+done
+if [[ -n "$src_root" && -n "${REFS:-}" ]]; then
+    echo "REFS and SRC cannot be combined: SRC builds your working copies as they are" >&2
+    exit 2
+fi
+
+# Branch of a repository from REFS, main when it is not there
+ref_of() {
+    local r
+    for r in ${REFS:-}; do
+        [[ "${r%%=*}" == "$1" ]] && { echo "${r#*=}"; return; }
+    done
+    echo main
+}
 
 mkdir -p "$build"
 : >"$build/versions.txt"
@@ -94,15 +126,21 @@ for entry in "${images[@]}"; do
         fi
     else
         src="$build/src/$repo"
+        branch="$(ref_of "$repo")"
         if [[ "$cloned" != *" $repo "* ]]; then
             rm -rf "$src"
-            git clone -q --depth 1 "https://github.com/PoUW-ZK/$repo.git" "$src"
+            git clone -q --depth 1 --branch "$branch" "https://github.com/PoUW-ZK/$repo.git" "$src"
             cloned+="$repo "
         fi
     fi
-    sha="$(git -C "$src" rev-parse --short=7 HEAD)"
-    if [[ -n "$src_root" && -n "$(git -C "$src" status --porcelain)" ]]; then
-        sha+="-dirty"
+    commit="$(git -C "$src" rev-parse HEAD)"
+    sha="${commit:0:7}"
+    if [[ -n "$src_root" ]]; then
+        branch="$(git -C "$src" branch --show-current)"
+        if [[ -n "$(git -C "$src" status --porcelain)" ]]; then
+            sha+="-dirty"
+            commit+="-dirty"
+        fi
     fi
     if [[ ! -f "$src/$dir/Dockerfile" || ! -f "$src/$requires" ]]; then
         skip "$image" "$service" "$sha has no $dir/Dockerfile or $requires"
@@ -110,11 +148,14 @@ for entry in "${images[@]}"; do
     fi
     docker build "${flags[@]}" \
         --label "org.opencontainers.image.revision=$sha" \
+        --build-arg "GIT_COMMIT=$commit" \
+        --build-arg "GIT_BRANCH=${branch:-unknown}" \
+        --build-arg "BUILD_TIME=$build_time" \
         -t "ghcr.io/pouw-zk/$image:$tag" "$src/$dir"
     if [[ -n "$src_root" ]]; then
-        echo "$image $sha ($(git -C "$src" branch --show-current), $src)" | tee -a "$build/versions.txt"
+        echo "$image $sha ($branch, $src)" | tee -a "$build/versions.txt"
     else
-        echo "$image $sha" | tee -a "$build/versions.txt"
+        echo "$image $sha ($branch)" | tee -a "$build/versions.txt"
         echo "$(echo "${image#pouw-}" | tr a-z- A-Z_)_VERSION=sha-$sha" >>"$build/versions.env"
     fi
 done

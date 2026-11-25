@@ -11,6 +11,35 @@
 // to staging. If tests or the deploy fail, staging stays on the previous
 // version and an e-mail goes to NOTIFY_EMAIL (main only, PRs show on GitHub).
 
+// Build with Parameters picks the test groups (SMOKE, BACKUP, DEVNET,
+// SERVICE_E2E), the services and the pytest tests (TESTS, a -k expression).
+// Push, PR and the evening build run everything; only such a full run of main
+// deploys to staging.
+
+// make test variables from the parameters. On the first build of a branch the
+// parameters do not exist yet (null), that counts as everything.
+def testSelection() {
+    def picked = []
+    if (params.SMOKE != false) { picked.add('smoke') }
+    if (params.BACKUP != false) { picked.add('backup') }
+    if (params.DEVNET != false) { picked.add('devnet') }
+    if (params.SERVICE_E2E != false) { picked.add('services') }
+    def suites = picked.join(',')
+    def services = (params.SERVICES ?: '').trim()
+    def tests = (params.TESTS ?: '').trim()
+    if (!suites) {
+        error 'No test group selected'
+    }
+    if (!(services ==~ /[a-z,\- ]*/)) {
+        error "SERVICES: comma-separated names, e.g. node,indexer (got: ${services})"
+    }
+    if (!(tests ==~ /[A-Za-z0-9_ .()\[\]\-]*/)) {
+        error "TESTS: a pytest -k expression of names, and/or/not and brackets (got: ${tests})"
+    }
+    return [suites: suites, services: services.replace(' ', ''), tests: tests,
+            full: suites == 'smoke,backup,devnet,services' && !services && !tests]
+}
+
 // E-mail for builds of main, only when SMTP is configured. Without SMTP the build just logs that it skipped it.
 def sendNotification(String subject, String body) {
     if (env.BRANCH_NAME != 'main') {
@@ -43,6 +72,17 @@ pipeline {
         cron(env.BRANCH_NAME == 'main' ? 'TZ=Europe/Bratislava\nH 21 * * *' : '')
     }
 
+    parameters {
+        booleanParam(name: 'SMOKE', defaultValue: true, description: 'Smoke tests (e2e/smoke.sh)')
+        booleanParam(name: 'BACKUP', defaultValue: true, description: 'A dump of the test copy and a trial restore of it')
+        booleanParam(name: 'DEVNET', defaultValue: true, description: 'e2e tests of the devnet (e2e/test_devnet.py)')
+        booleanParam(name: 'SERVICE_E2E', defaultValue: true, description: 'e2e tests of the services (their e2e/run.sh)')
+        string(name: 'SERVICES', defaultValue: '', trim: true,
+            description: 'Only the e2e of these services, e.g. node,indexer (empty = all)')
+        string(name: 'TESTS', defaultValue: '', trim: true,
+            description: 'Only the pytest tests that match this -k expression, e.g. "height or transfer" (empty = all)')
+    }
+
     stages {
         stage('Config check') {
             steps {
@@ -62,13 +102,25 @@ pipeline {
         }
         stage('Devnet tests') {
             steps {
-                sh 'make test'
+                script {
+                    def t = testSelection()
+                    if (!t.full) {
+                        currentBuild.description = (currentBuild.description ?: '') +
+                            "\nsuites: ${t.suites}" + (t.services ? " · services: ${t.services}" : '') +
+                            (t.tests ? " · tests: ${t.tests}" : '')
+                    }
+                    // as environment, so the values never pass through a shell command line
+                    withEnv(["SUITES=${t.suites}", "SERVICES=${t.services}", "TESTS=${t.tests}"]) {
+                        sh 'make test'
+                    }
+                }
             }
         }
         stage('Deploy to staging') {
             when {
                 branch 'main'
                 triggeredBy 'TimerTrigger'
+                expression { testSelection().full }
             }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'github-app',

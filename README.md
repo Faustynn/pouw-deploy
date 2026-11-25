@@ -63,6 +63,13 @@ The workload reads through `light-node` and submits round-robin to
 Jenkins **Load test** job. Grafana observes a run; switching a scenario is done
 through the `make` command, Jenkins, or `POST /api/v1/start`.
 
+On the server networks `workload-driver` keeps a default load running:
+`transfers-steady` again and again (`LOAD_SCENARIO` in `load.env`). It never
+runs in a test copy. `make load-start SCENARIO=transfers-spike` switches it at
+once, `make load-stop` turns it off, `make load-status` shows what runs.
+`make load` refuses to start while the default load is on, so the report of a
+load test is not mixed with it.
+
 Logins: Grafana `admin` / `.secrets/grafana_admin_password`, Hasura admin
 secret `.secrets/hasura_admin_secret` (queries without it get the read-only
 role `anonymous`, like the explorer), Jenkins `admin` /
@@ -165,6 +172,10 @@ make down           # stop everything, data is kept for the next start
 | --- | --- |
 | see my change of a service in the whole network | `make dev` (from whatever branch each `../pouw-*` is on, uncommitted changes too) |
 | test my change against the other services | `make dev-test`, results in `reports/`, then `make test-down` |
+| only some tests | `make test SUITES=devnet,services SERVICES=indexer TESTS="health or info"` (`TESTS` is pytest `-k`) |
+| rerun one test without restarting the network | `make test-up` once, then `make test-devnet TESTS=...` or `make test-services SERVICES=... TESTS=...` as often as needed, `make test-down` |
+| images of another branch than main | `make images REFS="pouw-indexer=feature/x"` (the rest from main) |
+| which commit runs in a service | `curl http://<service>:<port>/manage/info` (commit, branch, build time) |
 | the whole network from GHCR `:main`, without building | `make up` |
 | logs of one service | `make logs SERVICE=indexer`, only the last hour: `SINCE=1h` |
 | what is built from where | `build/versions.txt` |
@@ -179,7 +190,8 @@ working copy (no `Dockerfile` yet) is taken from GHCR `:main`; when there is
 none, the service is not started and `build/versions.txt` says why.
 
 Without `SRC` (`make up`, Jenkins, staging) the services come from GHCR,
-published from `main` by `docker.yml` of each repository. A new service stays
+published by `docker.yml` of each repository: `:main` and `:sha-xxxxxxx` from
+`main`, `:branch-<name>` from every other branch. A new service stays
 in the `network` profile until its image is published (none is there right
 now). Then delete its `profiles: [network]` line in `compose.yml`, from then on
 `make up`, the nightly test and staging run it.
@@ -270,8 +282,12 @@ def test_health(service):
   the test copy. `E2E_PROJECT` holds the compose project name.
 - Results go to JUnit XML in `$JUNIT_DIR` (done by `run.sh`), Jenkins shows
   them under Tests as a suite named after the repository.
+- `make test TESTS="..."` passes `PYTEST_ADDOPTS=-k "..."` to every `run.sh`;
+  a repository where no test matches passes (pytest exits with 5, `run.sh`
+  turns that into 0).
 - Another language: replace the body of `run.sh`, keep its contract (argument
-  = compose project, JUnit XML into `$JUNIT_DIR`, exit code ≠ 0 = failure).
+  = compose project, JUnit XML into `$JUNIT_DIR`, `PYTEST_ADDOPTS` as the
+  filter, exit code ≠ 0 = failure).
 
 **When Jenkins picks them up:** Jenkins builds and tests `main` of every
 service. A new e2e test is run from the first build after its PR is merged
@@ -404,23 +420,34 @@ Docker keeps at most 3 log files of 10 MB per container (`x-logging` in
 ## Commands
 
 ```text
-make help         List of commands
-make dev          Build the services from ../pouw-* and start the whole network locally
-make dev-test     Build the services from ../pouw-* and test them in a separate copy
-make secrets      Prepare secrets (random locally, from pass on the server)
-make up           Start services according to COMPOSE_PROFILES
-make down         Stop services of all profiles (data is kept)
-make restart      Restart services, e.g. after a password change in pass
-make seed         Fixture blocks of pouw-indexer into the database; never with the devnet, its sync stops
-make ps           Service status
-make logs         Logs of a service, e.g. make logs SERVICE=indexer [SINCE=1h] (without SERVICE all)
-make check        Validate compose, Prometheus with tests of its alerts, Alertmanager and the Caddyfile
-make images       Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
-make backup       Dump the database into BACKUP_DIR now (the service backup does it every night)
-make restore-test Trial restore of the newest dump into a separate database (DUMP=<file> another)
-make test-alert   Send a test alert; with SMTP_HOST and ALERT_EMAIL it arrives by e-mail
-make test         Smoke and e2e tests in a separate copy of the network (results in reports/)
-make test-down    Remove the test copy of the network
+make help           List of commands
+make dev            Build the services from ../pouw-* and start the whole network locally
+make dev-test       Build the services from ../pouw-* and test them in a separate copy
+make secrets        Prepare secrets (random locally, from pass on the server)
+make up             Start services according to COMPOSE_PROFILES
+make down           Stop services of all profiles (data is kept)
+make restart        Restart services, e.g. after a password change in pass
+make seed           Fixture blocks of pouw-indexer into the database; never with the devnet, its sync stops
+make ps             Service status
+make logs           Logs of a service, e.g. make logs SERVICE=indexer [SINCE=1h] (without SERVICE all)
+make check          Validate compose, Prometheus with tests of its alerts, Alertmanager and the Caddyfile
+make images         Build service images from main (or SRC=..), e.g. make images test IMAGE_TAG=local
+make backup         Dump the database into BACKUP_DIR now (the service backup does it every night)
+make restore-test   Trial restore of the newest dump into a separate database (DUMP=<file> another)
+make test-alert     Send a test alert; with SMTP_HOST and ALERT_EMAIL it arrives by e-mail
+make test           Smoke and e2e tests in a separate copy of the network (results in reports/)
+make test-up        Start the test copy of the network (make test without the tests)
+make test-run       The groups of SUITES against the running test copy
+make test-smoke     Smoke tests of the running test copy (reports/smoke.xml)
+make test-backup    Dump of the running test copy and a trial restore of it
+make test-devnet    e2e tests of the devnet against the running test copy (TESTS=<pytest -k>)
+make test-services  e2e tests of the services against the running test copy (SERVICES=node,indexer)
+make test-down      Remove the test copy of the network
+make load           Load test on the running network (staging); watch it in Grafana: PoUW · Load test
+make load-start     Switch the default load of the running network to SCENARIO=<name> (repeats)
+make load-stop      Turn the default load of the running network off (until load-start)
+make load-status    The default load and what the generator of the running network runs now
+make test-load      Load test in a separate network copy, like the Jenkins job pouw-load-test
 ```
 
 ## Staging

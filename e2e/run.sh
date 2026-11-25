@@ -34,8 +34,12 @@ transfer="$(docker run --rm --entrypoint pouw "$node_image" transfer \
     --seed "$(printf '01%.0s' $(seq 32))" --chain-id 1 --nonce "$nonce" \
     --to "$transfer_to" --amount "$transfer_amount" --fee 10)"
 
+# PYTEST_ADDOPTS (make test TESTS=...) picks some tests. When it matches none
+# here, pytest exits with 5 and that is fine: the test is in another suite.
+status=0
 docker run --rm \
     --network "${project}_default" \
+    -e PYTEST_ADDOPTS \
     -e E2E_TRANSFER="$transfer" \
     -e E2E_TRANSFER_TO="$transfer_to" \
     -e E2E_TRANSFER_AMOUNT="$transfer_amount" \
@@ -49,4 +53,10 @@ docker run --rm \
     -w /e2e \
     python:3.12-slim \
     sh -c "pip install -q --user --no-warn-script-location -r requirements.txt &&
-        python -m pytest -p no:cacheprovider -rxXs -o junit_suite_name=devnet --junitxml=/reports/devnet.xml"
+        python -m pytest -p no:cacheprovider -rxXs -o junit_suite_name=devnet --junitxml=/reports/devnet.xml" ||
+    status=$?
+if [[ "$status" == 5 && -n "${PYTEST_ADDOPTS:-}" ]]; then
+    echo "No test of the devnet matches PYTEST_ADDOPTS ($PYTEST_ADDOPTS)"
+    status=0
+fi
+exit "$status"
